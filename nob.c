@@ -23,11 +23,13 @@ const char *shaders[] = {
     "standard_text.comp.glsl",
     "standard_point_hidden_surface_removal.comp.glsl",
     "standard_point_hole_filling.comp.glsl",
+    "standard_triangle_render.comp.glsl",
 };
 
 const char *examples[] = {
     "example_points",
     "example_text",
+    "example_triangle_mesh",
 };
 
 bool compile_shaders(Cmd *cmd)
@@ -134,6 +136,7 @@ void log_usage(const char *program)
     printf("    --target, build target (e.g. windows and linux)\n");
     printf("    --run <executable> <args>, run after building (only for linux)\n");
     printf("    --renderdoc <executable> <args>, (only for linux) expects renderdoc/renderdoccmd in path (https://renderdoc.org/builds)\n");
+    printf("    --debug <executable> <args>, (only for linux) expects gf2 in path (https://github.com/nakst/gf)\n");
 }
 
 typedef struct {
@@ -148,6 +151,7 @@ struct {
     const char *executable;
     bool clean;
     bool renderdoc;
+    bool debug;
     bool run;
     Args args;
 } config;
@@ -164,6 +168,17 @@ bool parse_cmd_args(int argc, char **argv)
         } else if (!strcmp("--clean", flag)) {
             config.clean = true;
             nob_log(INFO, "executing clean build");
+        } else if (!strcmp("--debug", flag)) {
+            config.debug= true;
+            if (argc <= 0) {
+                nob_log(ERROR, "debug usage: `./nob --debug <executable> <args>`");
+                return false;
+            }
+            config.executable = shift(argv, argc);
+            while (argc) {
+                const char *arg = shift(argv, argc);
+                da_append(&config.args, arg);
+            }
         } else if (!strcmp("--renderdoc", flag)) {
             config.renderdoc = true;
             if (argc <= 0) {
@@ -251,6 +266,14 @@ bool launch_exec(Cmd *cmd)
     return true;
 }
 
+bool launch_gf2(Cmd *cmd)
+{
+    assert(config.executable);
+    if (config.args.count > 1) TODO("launch debugger with args");
+    cmd_append(cmd, "gf2", "-ex", "start", config.executable);
+    return cmd_run(cmd);
+}
+
 int main(int argc, char **argv)
 {
     NOB_GO_REBUILD_URSELF(argc, argv);
@@ -270,6 +293,7 @@ int main(int argc, char **argv)
 
     if (config.run)       if (!launch_exec(&cmd))      return 1;
     if (config.renderdoc) if (!launch_renderdoc(&cmd)) return 1;
+    if (config.debug)     if (!launch_gf2(&cmd))       return 1;
 
     return 0;
 }
