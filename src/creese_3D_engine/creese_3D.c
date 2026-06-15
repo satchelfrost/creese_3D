@@ -72,10 +72,12 @@ static struct {
 
 static Camera current_camera = {0};
 
+// TODO: only setup ds layout when needed
 /* standard descriptor set layouts */
 enum {
     DS_LAYOUT_CLEAR_BACKGROUND,
-    DS_LAYOUT_RENDER,
+    DS_LAYOUT_RENDER, // TODO: rename to point render
+    DS_LAYOUT_TRIANGLE_RENDER,
     DS_LAYOUT_RESOLVE,
     DS_LAYOUT_TEXT,
     DS_LAYOUT_HIDDEN_SURFACE_REMOVAL,
@@ -90,7 +92,8 @@ enum {
 static struct {
     struct { Rvk_Pipeline pl; VkDescriptorSet ds; } display;
     struct { Rvk_Pipeline pl; VkDescriptorSet ds; } clear_background;
-    struct { Rvk_Pipeline pl;                     } render;
+    struct { Rvk_Pipeline pl;                     } render; // TODO: maybe rename to point render
+    struct { Rvk_Pipeline pl;                     } triangle_render;
     struct { Rvk_Pipeline pl; VkDescriptorSet ds; } hidden_surface;
     struct { Rvk_Pipeline pl; VkDescriptorSet ds[FRAME_BUFFER_COUNT]; } hole_filling;
     struct { Rvk_Pipeline pl; VkDescriptorSet ds; } resolve;
@@ -115,51 +118,6 @@ static struct {
 
     VkDescriptorSetLayout ds_layouts[DS_LAYOUT_COUNT];
 } standard = {0};
-
-Rvk_Primitive_2D_Vertex primitive_2D_vertices[] = {
-    {{-1.0f, -1.0f}, {1.0f, 0.0f, 0.0f}},
-    {{ 1.0f, -1.0f}, {0.0f, 1.0f, 0.0f}},
-    {{-1.0f,  1.0f}, {0.0f, 0.0f, 1.0f}},
-    {{ 1.0f,  1.0f}, {1.0f, 1.0f, 1.0f}},
-};
-
-uint16_t primitive_2D_indices[] = {0, 1, 2, 2, 1, 3};
-
-Rvk_Primitive_2D_Vertex text_vertices[] = {
-    {{-1.0f, -1.0f}, {1.0f, 0.0f, 0.0f}},
-    {{ 1.0f, -1.0f}, {0.0f, 1.0f, 0.0f}},
-    {{-1.0f,  1.0f}, {0.0f, 0.0f, 1.0f}},
-    {{ 1.0f,  1.0f}, {1.0f, 1.0f, 1.0f}},
-};
-uint16_t text_indices[] = {0, 1, 2, 2, 1, 3};
-
-Rvk_Line_Vertex bounding_box_vertices[8] = {
-    {.position = {-0.5f, -0.5f,  0.5f}, .color = 0xff000000},
-    {.position = { 0.5f, -0.5f,  0.5f}, .color = 0xff000000},
-    {.position = {-0.5f,  0.5f,  0.5f}, .color = 0xff000000},
-    {.position = { 0.5f,  0.5f,  0.5f}, .color = 0xff000000},
-    {.position = {-0.5f, -0.5f, -0.5f}, .color = 0xff000000},
-    {.position = { 0.5f, -0.5f, -0.5f}, .color = 0xff000000},
-    {.position = {-0.5f,  0.5f, -0.5f}, .color = 0xff000000},
-    {.position = { 0.5f,  0.5f, -0.5f}, .color = 0xff000000},
-};
-uint16_t bounding_box_indices[24] = {0, 1, 2, 3, 0, 2, 1, 3,
-                                     4, 5, 6, 7, 4, 6, 5, 7,
-                                     0, 4, 1, 5, 2, 6, 3, 7};
-
-Rvk_Line_Vertex frustum_vertices[8] = {
-    {.position = {-1.0f, -1.0f, 0.0f}, .color = 0xff000000},
-    {.position = { 1.0f, -1.0f, 0.0f}, .color = 0xff000000},
-    {.position = {-1.0f,  1.0f, 0.0f}, .color = 0xff000000},
-    {.position = { 1.0f,  1.0f, 0.0f}, .color = 0xff000000},
-    {.position = {-1.0f, -1.0f, 1.0f}, .color = 0xff000000},
-    {.position = { 1.0f, -1.0f, 1.0f}, .color = 0xff000000},
-    {.position = {-1.0f,  1.0f, 1.0f}, .color = 0xff000000},
-    {.position = { 1.0f,  1.0f, 1.0f}, .color = 0xff000000},
-};
-uint16_t frustum_indices[24] = {0, 1, 2, 3, 0, 2, 1, 3,
-                                4, 5, 6, 7, 4, 6, 5, 7,
-                                0, 4, 1, 5, 2, 6, 3, 7};
 
 #define MAX_KEYBOARD_KEYS 512
 #define MAX_KEY_PRESSED_QUEUE 16
@@ -1324,6 +1282,61 @@ void setup_standard_ds_layouts()
                                     .pBindings = hole_filling_bindings,
                                     .bindingCount = ARRAY_LEN(hole_filling_bindings));
 
+    /* standard_triangle_render.comp.glsl */
+    VkDescriptorSetLayoutBinding triangle_render_bindings[] = {
+        {
+            .binding         = 0,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+        {
+            .binding         = 1,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+        {
+            .binding         = 2,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+        {
+            .binding         = 3,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+        {
+            .binding         = 4,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+        {
+            .binding         = 5,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+        {
+            .binding         = 6,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+        {
+            .binding         = 7,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+    };
+    vk_create_descriptor_set_layout(ctx.device.logical, NULL, &standard.ds_layouts[DS_LAYOUT_TRIANGLE_RENDER],
+                                    .pBindings = triangle_render_bindings,
+                                    .bindingCount = ARRAY_LEN(triangle_render_bindings));
+
     setup_display_ds_layout();
 }
 
@@ -1346,6 +1359,12 @@ struct {
     int bitmap_width;
     int bitmap_height;
 } text_push_const;
+
+struct {
+    uint32_t attr_mask;
+    uint32_t tri_count;
+    uint32_t color;
+} tri_render_push_const;
 
 void create_standard_compute_pipelines()
 {
@@ -1418,7 +1437,7 @@ void create_standard_compute_pipelines()
                                .stage = hidden_surface);
 
     /* hole_filling.comp.glsl pipeline */ // TODO: maybe only initialize if needed
-    assert(standard.ds_layouts[DS_LAYOUT_HIDDEN_SURFACE_REMOVAL]);
+    assert(standard.ds_layouts[DS_LAYOUT_HOLE_FILLING]);
     vk_create_pipeline_layout(ctx.device.logical, NULL, &standard.hole_filling.pl.layout,
                               .setLayoutCount = 1,
                               .pSetLayouts = &standard.ds_layouts[DS_LAYOUT_HOLE_FILLING]);
@@ -1428,9 +1447,23 @@ void create_standard_compute_pipelines()
                                .layout = standard.hole_filling.pl.layout,
                                .stage = hole_filling);
 
+    assert(standard.ds_layouts[DS_LAYOUT_TRIANGLE_RENDER]);
+    pc_range.size = sizeof(tri_render_push_const);
+    vk_create_pipeline_layout(ctx.device.logical, NULL, &standard.triangle_render.pl.layout,
+                              .setLayoutCount = 1,
+                              .pSetLayouts = &standard.ds_layouts[DS_LAYOUT_TRIANGLE_RENDER],
+                              .pPushConstantRanges = &pc_range,
+                              .pushConstantRangeCount = 1);
+    VkPipelineShaderStageCreateInfo triangle_render = load_compute_shader("shaders/standard_triangle_render.comp.glsl.spv", &sb);
+    assert(triangle_render.module);
+    vk_create_compute_pipeline(ctx.device.logical, cache, NULL, &standard.triangle_render.pl.handle,
+                               .layout = standard.triangle_render.pl.layout,
+                               .stage = triangle_render);
+
     create_display_pipeline();
 
     unload_shader(render);
+    unload_shader(triangle_render);
     unload_shader(hole_filling);
     unload_shader(hidden_surface);
     unload_shader(resolve);
@@ -1810,6 +1843,124 @@ void alloc_point_render_ds(VkDescriptorSet *ds)
                                 .pSetLayouts = &standard.ds_layouts[DS_LAYOUT_RENDER]);
 }
 
+void init_triangle_model_ds(Model *model)
+{
+    vk_allocate_descriptor_sets(ctx.device.logical, &model->ds,
+                                .descriptorPool = ctx.pool,
+                                .descriptorSetCount = 1,
+                                .pSetLayouts = &standard.ds_layouts[DS_LAYOUT_TRIANGLE_RENDER]);
+
+    size_t nil_size = 1*sizeof(model->nil_buffer);
+    size_t size = 0;
+
+    size =    model->indices.count*sizeof(*model->indices.items);
+    if (size) model->indices_buff = create_compute_buffer(size, model->indices.items);
+    else      model->indices_buff = create_compute_buffer(nil_size, &model->nil_buffer);
+
+    size =    model->positions.count*sizeof(*model->positions.items);
+    if (size) model->position_buff = create_compute_buffer(size, model->positions.items);
+    else      model->position_buff = create_compute_buffer(nil_size, &model->nil_buffer);
+
+    size =    model->normals.count*sizeof(*model->normals.items);
+    if (size) model->normal_buff = create_compute_buffer(size, model->normals.items);
+    else      model->normal_buff = create_compute_buffer(nil_size, &model->nil_buffer);
+
+    size =    model->tex_coords.count*sizeof(*model->tex_coords.items);
+    if (size) model->tex_coord_buff = create_compute_buffer(size, model->tex_coords.items);
+    else      model->tex_coord_buff = create_compute_buffer(nil_size, &model->nil_buffer);
+
+    size =    model->tangets.count*sizeof(*model->tangets.items);
+    if (size) model->tanget_buff = create_compute_buffer(size, model->tangets.items);
+    else      model->tanget_buff = create_compute_buffer(nil_size, &model->nil_buffer);
+
+    size =    model->colors.count*sizeof(*model->colors.items);
+    if (size) model->color_buff = create_compute_buffer(size, model->colors.items);
+    else      model->color_buff = create_compute_buffer(nil_size, &model->nil_buffer);
+}
+
+void update_triangle_model(Model model)
+{
+    if (!standard.uniform_buff.info.buffer)
+        standard.uniform_buff = r_create_mapped_uniform_buffer(ctx.device, sizeof(standard.uniform_data));
+    if (!standard.frame_buffers[0].info.buffer)
+        standard.frame_buffers[0] = create_software_frame_buffer(window.width, window.height);
+    assert(model.indices_buff.info.buffer);
+    assert(model.position_buff.info.buffer);
+    assert(model.normal_buff.info.buffer);
+    assert(model.tex_coord_buff.info.buffer);
+    assert(model.tanget_buff.info.buffer);
+    assert(model.color_buff.info.buffer);
+
+    VkWriteDescriptorSet writes[] = {
+        /* standard_triangle_render.comp.glsl */
+        {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstBinding = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .pBufferInfo = &standard.uniform_buff.info,
+            .dstSet = model.ds,
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstBinding = 1,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .pBufferInfo = &model.position_buff.info,
+            .dstSet = model.ds,
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstBinding = 2,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .pBufferInfo = &model.normal_buff.info,
+            .dstSet = model.ds,
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstBinding = 3,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .pBufferInfo = &model.tex_coord_buff.info,
+            .dstSet = model.ds,
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstBinding = 4,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .pBufferInfo = &model.color_buff.info,
+            .dstSet = model.ds,
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstBinding = 5,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .pBufferInfo = &model.tanget_buff.info,
+            .dstSet = model.ds,
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstBinding = 6,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .pBufferInfo = &model.indices_buff.info,
+            .dstSet = model.ds,
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstBinding = 7,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .pBufferInfo = &standard.frame_buffers[0].info,
+            .dstSet = model.ds,
+        },
+    };
+    vkUpdateDescriptorSets(ctx.device.logical, ARRAY_LEN(writes), writes, 0, NULL);
+}
+
 void init_standard_pipelines()
 {
     create_storage_image(window.width, window.height);
@@ -1925,4 +2076,12 @@ void copy_fb1_to_fb0()
     comp_to_comp_buff_barrier(standard.frame_buffers[0].info.buffer);
 
     standard.last_buff_write_was_fb1 = false;
+}
+
+void rotate_y(float angle)
+{
+    if (mat_stack_p > 0)
+        mat_stack[mat_stack_p - 1] = MatrixMultiply(MatrixRotateY(angle), mat_stack[mat_stack_p - 1]);
+    else
+        r_log(RVK_ERROR, "no matrix available to rotate y");
 }

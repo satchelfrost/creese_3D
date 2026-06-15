@@ -25,11 +25,19 @@ layout(std430, binding = 3) buffer tex_coord_data {
    float tex_coords[ ];
 };
 
-layout(std430, binding = 4) buffer index_data {
+layout(std430, binding = 4) buffer color_data {
+   uint colors[ ];
+};
+
+layout(std430, binding = 5) buffer tanget_data {
+   float tangets[ ];
+};
+
+layout(std430, binding = 6) buffer index_data {
    uint indices[ ];
 };
 
-layout(std430, binding = 5) buffer frame_data {
+layout(std430, binding = 7) buffer frame_data {
    uint64_t frame_buff[ ];
 };
 
@@ -102,12 +110,17 @@ void main()
     uint tri_id = gl_GlobalInvocationID.x;
     if (tri_id >= pc.tri_count) return;
     
+    // TODO: actuall handle all attributes
     uint idx0 = indices[tri_id*3+0];
     uint idx1 = indices[tri_id*3+1];
     uint idx2 = indices[tri_id*3+2];
     vec3 pos0 = vec3(positions[idx0*3+0], positions[idx0*3+1], positions[idx0*3+2]);
     vec3 pos1 = vec3(positions[idx1*3+0], positions[idx1*3+1], positions[idx1*3+2]);
     vec3 pos2 = vec3(positions[idx2*3+0], positions[idx2*3+1], positions[idx2*3+2]);
+    vec4 color0 = unpackUnorm4x8(colors[idx0]);
+    vec4 color1 = unpackUnorm4x8(colors[idx1]);
+    vec4 color2 = unpackUnorm4x8(colors[idx2]);
+
     mat4 mvp = ubo.proj*ubo.view*ubo.model;
     vec4 clip0 = mvp*vec4(pos0.xyz, 1.0);
     vec4 clip1 = mvp*vec4(pos1.xyz, 1.0);
@@ -132,6 +145,8 @@ void main()
     int bias1 = is_top_left(v1, v2) ? 0 : -1;
     int bias2 = is_top_left(v2, v0) ? 0 : -1;
 
+    float area = float(edge_cross(v0, v1, v2));
+
     for (int y = y_min; y <= y_max; y++) {
         for (int x = x_min; x <= x_max; x++) {
             ivec2 p = ivec2(x, y);
@@ -142,14 +157,18 @@ void main()
             bool inside = w0 >= 0 && w1 >= 0 && w2 >= 0;
             if (!inside) continue;
 
-            // TODO: the actual depth needs the barycentric coordinates of p
-            uint depth = floatBitsToUint(ndc0.z);
+            float alpha = w0/area;
+            float beta  = w1/area;
+            float gamma = w2/area;
+
+            uint depth = floatBitsToUint(alpha*ndc0.z + beta*ndc1.z + gamma*ndc2.z);
+            uint color = packUnorm4x8(alpha*color0 + beta*color1 + gamma*color2);
             int pixel_id = p.x + p.y*ubo.frame_width;
             uint64_t old_depth = frame_buff[pixel_id] >> 32;
 
             /* early-z test (the non atomic depth test first) */
             if (depth <= old_depth) {
-                uint64_t packed = uint64_t(depth) << 32 | uint64_t(pc.color);
+                uint64_t packed = uint64_t(depth) << 32 | uint64_t(color);
                 atomicMin(frame_buff[pixel_id], packed);
             }
         }

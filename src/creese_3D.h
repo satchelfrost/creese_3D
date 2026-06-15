@@ -288,6 +288,7 @@ Matrix get_projection();
 Matrix get_view();
 Matrix get_model();
 void matrix_cat(Matrix m);
+void rotate_y(float angle);
 
 VkCommandBuffer get_current_cmd_buff();
 void set_viewport_scissor();
@@ -317,6 +318,42 @@ typedef struct {
     Glyph glyphs[CHAR_COUNT]; // ASCII 32..126 is 95 glyphs
 } Font;
 
+typedef enum {
+    ATTRIBUTE_POSITION,
+    ATTRIBUTE_NORMAL,
+    ATTRIBUTE_TEX_COORD,
+    ATTRIBUTE_TANGET,
+    ATTRIBUTE_COLOR,
+    ATTRIBUTE_COUNT,
+} Attribute;
+
+typedef struct {
+    uint32_t attr_mask;
+    struct {  Vector3 *items; size_t count; size_t capacity; } positions;
+    struct {  Vector3 *items; size_t count; size_t capacity; } normals;
+    struct {  Vector2 *items; size_t count; size_t capacity; } tex_coords;
+    struct {  Vector2 *items; size_t count; size_t capacity; } tangets;
+    struct { uint32_t *items; size_t count; size_t capacity; } colors;
+    struct { uint32_t *items; size_t count; size_t capacity; } indices;
+
+    // vulkan cannot have a zero size buffer
+    // so this serves as something that's nonzero, but
+    // used when a model does not have an attribute. For example,
+    // suppose a model doesn't have tangets, but the shader still
+    // has a slot for them, well in that case the nil buffer gets bound to that slot
+    size_t nil_buffer;
+
+    // vulkan buffers
+    Rvk_Buffer position_buff;
+    Rvk_Buffer normal_buff;
+    Rvk_Buffer tex_coord_buff;
+    Rvk_Buffer tanget_buff;
+    Rvk_Buffer color_buff;
+    Rvk_Buffer indices_buff;
+
+    VkDescriptorSet ds;
+} Model;
+
 Font load_font(const char *file_path, int font_height);
 void unload_font(Font font);
 void draw_text_at_base(Font font, const char *text, size_t text_len, int x, int y, Color color);
@@ -336,5 +373,7 @@ void destroy_buffer(Rvk_Buffer buff);
 void compute_to_frag_sample_image_barrier(VkCommandBuffer cb, VkImage image);
 void alloc_point_render_ds(VkDescriptorSet *ds);
 void update_point_render_ds(Rvk_Buffer buff, VkDescriptorSet ds);
+void init_triangle_model_ds(Model *model); // maybe _vk? 
+void update_triangle_model(Model model);
 
 #endif // CREESE_3D_H_
