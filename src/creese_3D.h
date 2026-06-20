@@ -354,6 +354,11 @@ typedef struct {
     VkDescriptorSet ds;
 } Model;
 
+void draw_model(Model model);
+void destroy_model(Model model);
+void init_triangle_model_ds(Model *model);
+void update_triangle_model(Model model);
+
 Font load_font(const char *file_path, int font_height);
 void unload_font(Font font);
 void draw_text_at_base(Font font, const char *text, size_t text_len, int x, int y, Color color);
@@ -373,7 +378,5 @@ void destroy_buffer(Rvk_Buffer buff);
 void compute_to_frag_sample_image_barrier(VkCommandBuffer cb, VkImage image);
 void alloc_point_render_ds(VkDescriptorSet *ds);
 void update_point_render_ds(Rvk_Buffer buff, VkDescriptorSet ds);
-void init_triangle_model_ds(Model *model); // maybe _vk? 
-void update_triangle_model(Model model);
 
 #endif // CREESE_3D_H_

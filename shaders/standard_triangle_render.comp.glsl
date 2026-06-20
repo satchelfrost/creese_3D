@@ -9,8 +9,9 @@ layout (binding = 0) uniform UBO {
     mat4 model;
     int frame_width;
     int frame_height;
-    uint attr_mask;
-    uint tri_count;
+    uint bg_color;
+    int padding_1;
+    vec4 camera_pos;
 } ubo;
 
 layout(std430, binding = 1) buffer vert_data {
@@ -85,7 +86,7 @@ int edge_cross(ivec2 v0, ivec2 v1, ivec2 p)
     //
     ivec2 a = v1 - v0;
     ivec2 b = p  - v0;
-    return a.y*b.y - b.x*a.y;
+    return a.x*b.y - b.x*a.y;
 }
 
 bool is_top_left(ivec2 v0, ivec2 v1)
@@ -155,6 +156,7 @@ void main()
             int w2 = edge_cross(v2, v0, p) + bias2;
             /* assumes triangle is clockwise */
             bool inside = w0 >= 0 && w1 >= 0 && w2 >= 0;
+            // bool inside = w0 <= 0 && w1 <= 0 && w2 <= 0;
             if (!inside) continue;
 
             float alpha = w0/area;
@@ -163,12 +165,14 @@ void main()
 
             uint depth = floatBitsToUint(alpha*ndc0.z + beta*ndc1.z + gamma*ndc2.z);
             uint color = packUnorm4x8(alpha*color0 + beta*color1 + gamma*color2);
+            // uint color = 0xffffffff;
             int pixel_id = p.x + p.y*ubo.frame_width;
             uint64_t old_depth = frame_buff[pixel_id] >> 32;
 
-            /* early-z test (the non atomic depth test first) */
+            /* early-z test (the non-atomic depth test first) */
             if (depth <= old_depth) {
                 uint64_t packed = uint64_t(depth) << 32 | uint64_t(color);
+                /* atomic depth test */
                 atomicMin(frame_buff[pixel_id], packed);
             }
         }

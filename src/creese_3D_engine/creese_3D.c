@@ -248,6 +248,7 @@ void close_window()
     destroy_pipeline(standard.resolve.pl);
     destroy_pipeline(standard.hole_filling.pl);
     destroy_pipeline(standard.render.pl);
+    destroy_pipeline(standard.triangle_render.pl);
     destroy_pipeline(standard.hidden_surface.pl);
     destroy_pipeline(standard.clear_background.pl);
     destroy_pipeline(standard.text.pl);
@@ -1706,6 +1707,24 @@ void draw_points(VkDescriptorSet ds, size_t point_count, size_t point_offset)
     }
 }
 
+void draw_model(Model model)
+{
+    int group_x = 1, group_y = 1, group_z = 1;
+    VkCommandBuffer cb = ctx.device.cmd_buffs[0];
+
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, standard.triangle_render.pl.handle);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, standard.triangle_render.pl.layout, 0, 1, &model.ds, 0, NULL);
+
+    tri_render_push_const.attr_mask = model.attr_mask;
+    tri_render_push_const.tri_count = model.indices.count/3;
+    tri_render_push_const.color     = color_to_uint32_t(MAGENTA);
+
+    group_x = ceilf(tri_render_push_const.tri_count/POINT_WORKGROUP_SIZE);
+    vkCmdPushConstants(cb, standard.triangle_render.pl.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+            sizeof(tri_render_push_const), &tri_render_push_const);
+    vkCmdDispatch(cb, group_x, group_y, group_z);
+}
+
 void resolve_image()
 {
     /* resolve only reads from fb0 */
@@ -1876,6 +1895,25 @@ void init_triangle_model_ds(Model *model)
     size =    model->colors.count*sizeof(*model->colors.items);
     if (size) model->color_buff = create_compute_buffer(size, model->colors.items);
     else      model->color_buff = create_compute_buffer(nil_size, &model->nil_buffer);
+}
+
+void destroy_model(Model model)
+{
+    /* for now we just free any memory, but this isn't super sophisticated, it would be better
+     * to have the user manage/reuse their own memory, but this will do for now */
+    da_free(model.positions);
+    da_free(model.normals);
+    da_free(model.tex_coords);
+    da_free(model.tangets);
+    da_free(model.colors);
+    da_free(model.indices);
+
+    destroy_buffer(model.indices_buff);
+    destroy_buffer(model.position_buff);
+    destroy_buffer(model.normal_buff);
+    destroy_buffer(model.tex_coord_buff);
+    destroy_buffer(model.tanget_buff);
+    destroy_buffer(model.color_buff);
 }
 
 void update_triangle_model(Model model)
