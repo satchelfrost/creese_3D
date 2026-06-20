@@ -20,6 +20,9 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "../external/stb_truetype.h"
 
+#define TINYOBJ_LOADER_C_IMPLEMENTATION
+#include "../external/tinyobj_loader_c.h"
+
 #ifndef Z_NEAR
     #define Z_NEAR 0.1
 #endif
@@ -1716,8 +1719,8 @@ void draw_model(Model model)
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, standard.triangle_render.pl.layout, 0, 1, &model.ds, 0, NULL);
 
     tri_render_push_const.attr_mask = model.attr_mask;
-    tri_render_push_const.tri_count = model.indices.count/3;
-    tri_render_push_const.color     = color_to_uint32_t(MAGENTA);
+    tri_render_push_const.tri_count = model.tri_count;
+    tri_render_push_const.color     = color_to_uint32_t(WHITE);
 
     group_x = ceilf(tri_render_push_const.tri_count/POINT_WORKGROUP_SIZE);
     vkCmdPushConstants(cb, standard.triangle_render.pl.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
@@ -2122,4 +2125,80 @@ void rotate_y(float angle)
         mat_stack[mat_stack_p - 1] = MatrixMultiply(MatrixRotateY(angle), mat_stack[mat_stack_p - 1]);
     else
         r_log(RVK_ERROR, "no matrix available to rotate y");
+}
+
+
+typedef struct {
+    String_Builder obj;
+    String_Builder mtl;
+} Obj_File_Data;
+
+void obj_file_reader(void *ctx, const char *file_name, int is_mtl, const char *obj_file_name, char **items, size_t *count)
+{
+    UNUSED(obj_file_name);
+
+    Obj_File_Data *file_data = (Obj_File_Data *)ctx;
+    String_Builder *sb = (is_mtl) ? &file_data->mtl : &file_data->obj;
+    if (!read_entire_file(file_name, sb)) {
+        *count = 0;
+        return;
+    }
+
+    *items = sb->items;
+    *count = sb->count;
+}
+
+Model load_obj_model(const char *file_name)
+{
+    Model model = {0};
+    unsigned int flags = TINYOBJ_FLAG_TRIANGULATE;
+    tinyobj_attrib_t attr = {0};
+    tinyobj_shape_t *shapes = NULL;
+    size_t num_shapes = 0;
+    tinyobj_material_t *materials = NULL;
+    size_t num_materials = 0;
+    Obj_File_Data file_data = {0};
+
+    int res = tinyobj_parse_obj(&attr, &shapes, &num_shapes, &materials,
+                                &num_materials, file_name, obj_file_reader, &file_data, flags);
+    if (res != TINYOBJ_SUCCESS) {
+        fprintf(stderr, "failed to parse obj file %s, error: %d\n", file_name, res);
+        return model;
+    }
+
+    if (materials) printf("WARNING: not handling materials\n");
+
+    if (attr.num_vertices)  model.attr_mask |= (1<<ATTRIBUTE_POSITION);
+    if (attr.num_normals)   model.attr_mask |= (1<<ATTRIBUTE_NORMAL);
+    if (attr.num_texcoords) model.attr_mask |= (1<<ATTRIBUTE_TEX_COORD);
+
+    for (size_t i = 0; i < attr.num_faces; i++) {
+        int v_idx  = attr.faces[i].v_idx;
+        int vt_idx = attr.faces[i].vt_idx;
+        int vn_idx = attr.faces[i].vn_idx;
+        if (attr.num_vertices) {
+            Vector3 v = {attr.vertices[v_idx*3 + 0], attr.vertices[v_idx*3 + 1], attr.vertices[v_idx*3 + 2]};
+            da_append(&model.positions, v);
+        }
+        if (attr.num_normals) {
+            Vector3 n = {attr.normals[vn_idx*3 + 0], attr.normals[vn_idx*3 + 1], attr.normals[vn_idx*3 + 2]};
+            da_append(&model.normals, n);
+        }
+        if (attr.num_texcoords) {
+            Vector2 t = {attr.texcoords[vt_idx*2 + 0], attr.texcoords[vt_idx*2 + 1]};
+            da_append(&model.tex_coords, t);
+        }
+
+        da_append(&model.indices, i);
+    }
+
+    model.tri_count = model.indices.count/3;
+
+    tinyobj_attrib_free(&attr);
+    tinyobj_shapes_free(shapes, num_shapes);
+    tinyobj_materials_free(materials, num_materials);
+    // sb_free(obj.file_data.mtl);
+    // sb_free(obj.file_data.obj);
+
+    return model;
 }

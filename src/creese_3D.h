@@ -1,6 +1,13 @@
 #ifndef CREESE_3D_H_
 #define CREESE_3D_H_
 
+// TODO: make the attribute switches do something in the triangle render shader
+// TODO: decide if I actually want to pass indices, or just have it implied that it's in order 
+// TODO: promote the simple shapes like cube to API
+// TOOD: if there are no color attributes on the vertices, then the color should come from push constant
+// TODO: pass the model view projection as a push constant instead of a ubo (or perhaps view and projection as ubo)
+// TODO: frame buffer should be based on resolution not necessarily window size, make this configurable
+
 // TODO: bring some of the ideas from creese 2D such as module structure
 // TODO: separate into some behavior into platform_desktop
 // TODO: precompile some of the external modules
@@ -343,6 +350,8 @@ typedef struct {
     // has a slot for them, well in that case the nil buffer gets bound to that slot
     size_t nil_buffer;
 
+    size_t tri_count;
+
     // vulkan buffers
     Rvk_Buffer position_buff;
     Rvk_Buffer normal_buff;
@@ -354,6 +363,7 @@ typedef struct {
     VkDescriptorSet ds;
 } Model;
 
+Model load_obj_model(const char *file_name);
 void draw_model(Model model);
 void destroy_model(Model model);
 void init_triangle_model_ds(Model *model);
