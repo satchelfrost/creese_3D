@@ -76,29 +76,9 @@ struct {
     { .position = V7, .color = MAGENTA, .normal = N_DOWN,},
 };
 
-struct {
-    Vector3 position;
-    Color color;
-} triangle[] = {
-    { .position = {-0.5f, -0.5f, 0.0f}, .color = RED,},
-    { .position = { 0.0f,  0.5f, 0.0f}, .color = GREEN,},
-    { .position = { 0.5f, -0.5f, 0.0f}, .color = BLUE,},
-};
-
 int main()
 {
     Model model = {0};
-
-    // model = load_obj_model("assets/dragon.obj");
-
-    // String_Builder sb = {0};
-    // model.attr_mask = 1<<ATTRIBUTE_POSITION;
-    // if (!read_entire_file("assets/dragon.bin", &sb)) return 1;
-    // model.positions.items    = (Vector3 *)sb.items;
-    // model.positions.count    = sb.count/(sizeof(Vector3));
-    // model.positions.capacity = sb.capacity/(sizeof(Vector3));
-    // model.tri_count = model.positions.count/3;
-
     model.attr_mask = 1<<ATTRIBUTE_POSITION | 1<<ATTRIBUTE_COLOR | 1<<ATTRIBUTE_NORMAL;
     for (size_t i = 0; i < ARRAY_LEN(cube_verts); i++) {
         da_append(&model.positions, cube_verts[i].position);
@@ -107,14 +87,6 @@ int main()
         da_append(&model.indices, i);
     }
     model.tri_count = model.indices.count/3;
-
-    // model.attr_mask = 1<<ATTRIBUTE_POSITION | 1<<ATTRIBUTE_COLOR;
-    // for (size_t i = 0; i < ARRAY_LEN(triangle); i++) {
-    //     da_append(&model.positions, triangle[i].position);
-    //     da_append(&model.colors, color_to_uint32_t(triangle[i].color));
-    //     da_append(&model.indices, i);
-    // }
-    // model.tri_count = model.indices.count/3;
 
     Camera camera = {
         .position   = {0.0f, 1.0f, 3.0f},
