@@ -1,5 +1,7 @@
 #include "creese_3D.h"
 
+#define FONT_SIZE 42
+
 /*
  *      1---------3
  *    / |        /|
@@ -78,18 +80,20 @@ struct {
 
 int main()
 {
-    Model model = {0};
-    model.attr_mask = 1<<ATTRIBUTE_POSITION | 1<<ATTRIBUTE_COLOR | 1<<ATTRIBUTE_NORMAL;
+    Model bunny = load_obj_model("assets/bunny.obj");
+    bunny.color = color_to_uint32_t(RED);
+
+    Model cube = {0};
     for (size_t i = 0; i < ARRAY_LEN(cube_verts); i++) {
-        da_append(&model.positions, cube_verts[i].position);
-        da_append(&model.normals, cube_verts[i].normal);
-        da_append(&model.colors, color_to_uint32_t(cube_verts[i].color));
-        da_append(&model.indices, i);
+        da_append(&cube.positions, cube_verts[i].position);
+        da_append(&cube.colors, color_to_uint32_t(cube_verts[i].color));
+        da_append(&cube.indices, i);
     }
-    model.tri_count = model.indices.count/3;
+    cube.tri_count = cube.indices.count/3;
+    cube.clockwise = true;
 
     Camera camera = {
-        .position   = {0.0f, 1.0f, 3.0f},
+        .position   = {0.0f, 2.0f, 5.0f},
         .target     = {0.0f, 0.0f, 0.0f},
         .up         = {0.0f, 1.0f, 0.0f},
         .fovy       = 45.0f,
@@ -97,23 +101,35 @@ int main()
 
     init_window(640, 480, "triangle mesh");
 
-    init_triangle_model_ds(&model);
-    update_triangle_model(model);
+    init_triangle_model_ds(&bunny);
+    update_triangle_model(bunny);
+    init_triangle_model_ds(&cube);
+    update_triangle_model(cube);
+
+    bool draw_bunny = true;
+    Font font = load_font("assets/RobotoMono-Medium.ttf", FONT_SIZE);
+    String_Builder sb = {0};
 
     while (!window_should_close()) {
-        if (is_key_down(KEY_SPACE)) printf("%d\n", get_avg_fps());
+        if (is_key_down(KEY_F)) printf("%d\n", get_avg_fps());
+        if (is_key_pressed(KEY_SPACE)) draw_bunny = !draw_bunny;
         update_camera_free(&camera);
 
         begin_drawing();
             clear_background(BLACK);
             begin_mode_3D(camera);
                 rotate_y(get_time());
-                draw_model(model);
+                draw_model(draw_bunny ? bunny : cube);
             end_mode_3D();
+
+            sb.count = 0;
+            sb_appendf(&sb, "FPS:%d", get_avg_fps());
+            draw_text_at_base(font, sb.items, sb.count, 20, FONT_SIZE, WHITE);
         end_drawing();
     }
 
-    destroy_model(model);
+    destroy_model(bunny);
+    destroy_model(cube);
     close_window();
     return 0;
 }

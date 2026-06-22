@@ -1365,9 +1365,11 @@ struct {
 } text_push_const;
 
 struct {
+    float16 model;
     uint32_t attr_mask;
     uint32_t tri_count;
     uint32_t color;
+    uint32_t clockwise;
 } tri_render_push_const;
 
 void create_standard_compute_pipelines()
@@ -1718,9 +1720,11 @@ void draw_model(Model model)
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, standard.triangle_render.pl.handle);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, standard.triangle_render.pl.layout, 0, 1, &model.ds, 0, NULL);
 
+    tri_render_push_const.model     = MatrixToFloatV(get_model());
     tri_render_push_const.attr_mask = model.attr_mask;
     tri_render_push_const.tri_count = model.tri_count;
-    tri_render_push_const.color     = color_to_uint32_t(WHITE);
+    tri_render_push_const.color     = (model.color) ? model.color : color_to_uint32_t(WHITE);
+    tri_render_push_const.clockwise = model.clockwise;
 
     group_x = ceilf(tri_render_push_const.tri_count/POINT_WORKGROUP_SIZE);
     vkCmdPushConstants(cb, standard.triangle_render.pl.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
@@ -1875,29 +1879,40 @@ void init_triangle_model_ds(Model *model)
     size_t nil_size = 1*sizeof(model->nil_buffer);
     size_t size = 0;
 
-    size =    model->indices.count*sizeof(*model->indices.items);
-    if (size) model->indices_buff = create_compute_buffer(size, model->indices.items);
-    else      model->indices_buff = create_compute_buffer(nil_size, &model->nil_buffer);
+    size = model->indices.count*sizeof(*model->indices.items);
+    if (size) {
+        model->indices_buff = create_compute_buffer(size, model->indices.items);
+    } else      model->indices_buff = create_compute_buffer(nil_size, &model->nil_buffer);
 
-    size =    model->positions.count*sizeof(*model->positions.items);
-    if (size) model->position_buff = create_compute_buffer(size, model->positions.items);
-    else      model->position_buff = create_compute_buffer(nil_size, &model->nil_buffer);
+    size = model->positions.count*sizeof(*model->positions.items);
+    if (size) {
+        model->position_buff = create_compute_buffer(size, model->positions.items);
+        model->attr_mask |= 1<<ATTRIBUTE_POSITION;
+    } else model->position_buff = create_compute_buffer(nil_size, &model->nil_buffer);
 
-    size =    model->normals.count*sizeof(*model->normals.items);
-    if (size) model->normal_buff = create_compute_buffer(size, model->normals.items);
-    else      model->normal_buff = create_compute_buffer(nil_size, &model->nil_buffer);
+    size = model->normals.count*sizeof(*model->normals.items);
+    if (size) {
+        model->normal_buff = create_compute_buffer(size, model->normals.items);
+        model->attr_mask |= 1<<ATTRIBUTE_NORMAL;
+    } else model->normal_buff = create_compute_buffer(nil_size, &model->nil_buffer);
 
-    size =    model->tex_coords.count*sizeof(*model->tex_coords.items);
-    if (size) model->tex_coord_buff = create_compute_buffer(size, model->tex_coords.items);
-    else      model->tex_coord_buff = create_compute_buffer(nil_size, &model->nil_buffer);
+    size = model->tex_coords.count*sizeof(*model->tex_coords.items);
+    if (size) {
+        model->tex_coord_buff = create_compute_buffer(size, model->tex_coords.items);
+        model->attr_mask |= 1<<ATTRIBUTE_TEX_COORD;
+    } else model->tex_coord_buff = create_compute_buffer(nil_size, &model->nil_buffer);
 
-    size =    model->tangets.count*sizeof(*model->tangets.items);
-    if (size) model->tanget_buff = create_compute_buffer(size, model->tangets.items);
-    else      model->tanget_buff = create_compute_buffer(nil_size, &model->nil_buffer);
+    size = model->tangets.count*sizeof(*model->tangets.items);
+    if (size) {
+        model->tanget_buff = create_compute_buffer(size, model->tangets.items);
+        model->attr_mask |= 1<<ATTRIBUTE_TANGET;
+    } else model->tanget_buff = create_compute_buffer(nil_size, &model->nil_buffer);
 
-    size =    model->colors.count*sizeof(*model->colors.items);
-    if (size) model->color_buff = create_compute_buffer(size, model->colors.items);
-    else      model->color_buff = create_compute_buffer(nil_size, &model->nil_buffer);
+    size = model->colors.count*sizeof(*model->colors.items);
+    if (size) {
+        model->color_buff = create_compute_buffer(size, model->colors.items);
+        model->attr_mask |= 1<<ATTRIBUTE_COLOR;
+    } else model->color_buff = create_compute_buffer(nil_size, &model->nil_buffer);
 }
 
 void destroy_model(Model model)

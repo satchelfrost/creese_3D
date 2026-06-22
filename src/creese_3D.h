@@ -361,6 +361,8 @@ typedef struct {
     Rvk_Buffer indices_buff;
 
     VkDescriptorSet ds;
+    bool clockwise;
+    uint color;
 } Model;
 
 Model load_obj_model(const char *file_name);
