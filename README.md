@@ -5,3 +5,4 @@ Unlike Creese 2D which was a CPU software renderer, Creese 3D is a GPU-based sof
 rendering/rasterizing is done with compute shaders.
 
 ![](images/point_cloud.png)
+![](images/bunny.png)
