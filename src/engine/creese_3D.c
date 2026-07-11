@@ -20,8 +20,8 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "../external/stb_truetype.h"
 
-#define TINYOBJ_LOADER_C_IMPLEMENTATION
-#include "../external/tinyobj_loader_c.h"
+// engine modules
+#include "obj_loader.c"
 
 #ifndef Z_NEAR
     #define Z_NEAR 0.1
@@ -75,11 +75,10 @@ static struct {
 
 static Camera current_camera = {0};
 
-// TODO: only setup ds layout when needed
 /* standard descriptor set layouts */
 enum {
     DS_LAYOUT_CLEAR_BACKGROUND,
-    DS_LAYOUT_RENDER, // TODO: rename to point render
+    DS_LAYOUT_POINT_RENDER,
     DS_LAYOUT_TRIANGLE_RENDER,
     DS_LAYOUT_RESOLVE,
     DS_LAYOUT_TEXT,
@@ -107,17 +106,19 @@ static struct {
     Rvk_Buffer frame_buffers[FRAME_BUFFER_COUNT];
     bool last_buff_write_was_fb1;
     Rvk_Texture display_texture;
-    Rvk_Buffer uniform_buff;
     struct {
-        float16 proj;
-        float16 view;
-        float16 model;
-        int frame_width;
-        int frame_height;
-        uint32_t bg_color;
-        int padding_1;
-        Vector4 camera_pos;
-    } uniform_data;
+        Rvk_Buffer buffer;
+        struct {
+            float16 proj;
+            float16 view;
+            float16 model;
+            int frame_width;
+            int frame_height;
+            uint32_t bg_color;
+            int padding_1;
+            Vector4 camera_pos;
+        } data;
+    } uniform;
 
     VkDescriptorSetLayout ds_layouts[DS_LAYOUT_COUNT];
 } standard = {0};
@@ -126,7 +127,7 @@ static struct {
 #define MAX_KEY_PRESSED_QUEUE 16
 #define MAX_CHAR_PRESSED_QUEUE 16
 #define CAMERA_MOVE_SPEED 10.0f
-#define CAMERA_MOUSE_MOVE_SENSITIVITY 0.1f
+#define CAMERA_MOUSE_MOVE_SENSITIVITY 0.5f
 #define CAMERA_ROT_SENSITIVITY 0.1f
 #define GAMEPAD_ROT_SENSITIVITY 1.0f
 #define MAX_MOUSE_BUTTONS 8
@@ -243,10 +244,11 @@ void close_window()
     vkQueueWaitIdle(ctx.device.queue);
 
     for (size_t i = 0; i < FRAME_BUFFER_COUNT; i++)
-        r_destroy_rvk_buffer(ctx.device.logical, standard.frame_buffers[i]);
-    r_destroy_rvk_buffer(ctx.device.logical, standard.uniform_buff);
-    r_destroy_texture(ctx.device.logical, standard.display_texture);
-    r_destroy_texture(ctx.device.logical, standard.text.texture);
+        destroy_buffer(standard.frame_buffers[i]);
+
+    destroy_buffer(standard.uniform.buffer);
+    destroy_texture(standard.display_texture);
+    destroy_texture(standard.text.texture);
     destroy_pipeline(standard.display.pl);
     destroy_pipeline(standard.resolve.pl);
     destroy_pipeline(standard.hole_filling.pl);
@@ -329,10 +331,10 @@ void clear_background(Color bg_color)
 void end_drawing()
 {
     /* update our standard uniform buffer and copy to device visible buffer */
-    standard.uniform_data.frame_width  = window.width;
-    standard.uniform_data.frame_height = window.height;
-    standard.uniform_data.bg_color     = clear_background_push_const.clear_color;
-    memcpy(standard.uniform_buff.mapped, &standard.uniform_data, sizeof(standard.uniform_data));
+    standard.uniform.data.frame_width  = window.width;
+    standard.uniform.data.frame_height = window.height;
+    standard.uniform.data.bg_color     = clear_background_push_const.clear_color;
+    memcpy(standard.uniform.buffer.mapped, &standard.uniform.data, sizeof(standard.uniform.data));
 
     VkCommandBuffer cb = ctx.device.cmd_buffs[0];
     resolve_image();
@@ -446,11 +448,11 @@ void copy_fb1_to_fb0();
 
 void end_mode_3D()
 {
-    standard.uniform_data.proj         = MatrixToFloatV(get_projection());
-    standard.uniform_data.view         = MatrixToFloatV(get_view());
-    standard.uniform_data.model        = MatrixToFloatV(get_model());
+    standard.uniform.data.proj  = MatrixToFloatV(get_projection());
+    standard.uniform.data.view  = MatrixToFloatV(get_view());
+    standard.uniform.data.model = MatrixToFloatV(get_model());
     Vector4 cam_pos = (Vector4){current_camera.position.x, current_camera.position.y, current_camera.position.z, 1.0};
-    standard.uniform_data.camera_pos   = cam_pos;
+    standard.uniform.data.camera_pos = cam_pos;
     pop_matrix();
 
     while (mat_stack_p > 0) {
@@ -1187,7 +1189,7 @@ void setup_standard_ds_layouts()
             .stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT,
         },
     };
-    vk_create_descriptor_set_layout(ctx.device.logical, NULL, &standard.ds_layouts[DS_LAYOUT_RENDER],
+    vk_create_descriptor_set_layout(ctx.device.logical, NULL, &standard.ds_layouts[DS_LAYOUT_POINT_RENDER],
                                     .pBindings = render_bindings,
                                     .bindingCount = ARRAY_LEN(render_bindings));
 
@@ -1366,10 +1368,10 @@ struct {
 
 struct {
     float16 model;
-    uint32_t attr_mask;
+    uint32_t attribute_mask;
     uint32_t tri_count;
-    uint32_t color;
-    uint32_t clockwise;
+    uint32_t base_color;
+    uint32_t ccw;
 } tri_render_push_const;
 
 void create_standard_compute_pipelines()
@@ -1384,7 +1386,7 @@ void create_standard_compute_pipelines()
     /* standard_point_render.comp.glsl pipeline */
     vk_create_pipeline_layout(ctx.device.logical, NULL, &standard.render.pl.layout,
                               .setLayoutCount = 1,
-                              .pSetLayouts = &standard.ds_layouts[DS_LAYOUT_RENDER],
+                              .pSetLayouts = &standard.ds_layouts[DS_LAYOUT_POINT_RENDER],
                               .pushConstantRangeCount = 1,
                               .pPushConstantRanges = &pc_range);
 
@@ -1488,8 +1490,8 @@ Rvk_Buffer create_software_frame_buffer(int width, int height)
 
 void update_point_render_ds(Rvk_Buffer point_buffer, VkDescriptorSet ds)
 {
-    if (!standard.uniform_buff.info.buffer) {
-        standard.uniform_buff = r_create_mapped_uniform_buffer(ctx.device, sizeof(standard.uniform_data));
+    if (!standard.uniform.buffer.info.buffer) {
+        standard.uniform.buffer = r_create_mapped_uniform_buffer(ctx.device, sizeof(standard.uniform.data));
     }
     if (!standard.frame_buffers[0].info.buffer) {
         standard.frame_buffers[0] = create_software_frame_buffer(window.width, window.height);
@@ -1503,7 +1505,7 @@ void update_point_render_ds(Rvk_Buffer point_buffer, VkDescriptorSet ds)
             .dstBinding = 0,
             .descriptorCount = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .pBufferInfo = &standard.uniform_buff.info,
+            .pBufferInfo = &standard.uniform.buffer.info,
             .dstSet = ds,
         },
         {
@@ -1550,8 +1552,8 @@ void init_clear_background_ds()
 
 void init_resolve_ds()
 {
-    if (!standard.uniform_buff.info.buffer)
-        standard.uniform_buff = r_create_mapped_uniform_buffer(ctx.device, sizeof(standard.uniform_data));
+    if (!standard.uniform.buffer.info.buffer)
+        standard.uniform.buffer = r_create_mapped_uniform_buffer(ctx.device, sizeof(standard.uniform.data));
     if (!standard.frame_buffers[0].info.buffer)
         standard.frame_buffers[0] = create_software_frame_buffer(window.width, window.height);
 
@@ -1566,7 +1568,7 @@ void init_resolve_ds()
             .dstBinding = 0,
             .descriptorCount = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .pBufferInfo = &standard.uniform_buff.info,
+            .pBufferInfo = &standard.uniform.buffer.info,
             .dstSet = standard.resolve.ds,
         },
         {
@@ -1591,8 +1593,8 @@ void init_resolve_ds()
 
 void init_hidden_surface_ds()
 {
-    if (!standard.uniform_buff.info.buffer)
-        standard.uniform_buff = r_create_mapped_uniform_buffer(ctx.device, sizeof(standard.uniform_data));
+    if (!standard.uniform.buffer.info.buffer)
+        standard.uniform.buffer = r_create_mapped_uniform_buffer(ctx.device, sizeof(standard.uniform.data));
     for (size_t i = 0; i < FRAME_BUFFER_COUNT; i++) {
         if (!standard.frame_buffers[i].info.buffer)
             standard.frame_buffers[i] = create_software_frame_buffer(window.width, window.height);
@@ -1609,7 +1611,7 @@ void init_hidden_surface_ds()
             .dstBinding = 0,
             .descriptorCount = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .pBufferInfo = &standard.uniform_buff.info,
+            .pBufferInfo = &standard.uniform.buffer.info,
             .dstSet = standard.hidden_surface.ds,
         },
         {
@@ -1634,8 +1636,8 @@ void init_hidden_surface_ds()
 
 void init_hole_filling_ds()
 {
-    if (!standard.uniform_buff.info.buffer)
-        standard.uniform_buff = r_create_mapped_uniform_buffer(ctx.device, sizeof(standard.uniform_data));
+    if (!standard.uniform.buffer.info.buffer)
+        standard.uniform.buffer = r_create_mapped_uniform_buffer(ctx.device, sizeof(standard.uniform.data));
     for (size_t i = 0; i < FRAME_BUFFER_COUNT; i++) {
         if (!standard.frame_buffers[i].info.buffer)
             standard.frame_buffers[i] = create_software_frame_buffer(window.width, window.height);
@@ -1656,7 +1658,7 @@ void init_hole_filling_ds()
             .dstBinding = 0,
             .descriptorCount = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .pBufferInfo = &standard.uniform_buff.info,
+            .pBufferInfo = &standard.uniform.buffer.info,
             .dstSet = standard.hole_filling.ds[0],
         },
         {
@@ -1718,17 +1720,17 @@ void draw_model(Model model)
     VkCommandBuffer cb = ctx.device.cmd_buffs[0];
 
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, standard.triangle_render.pl.handle);
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, standard.triangle_render.pl.layout, 0, 1, &model.ds, 0, NULL);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, standard.triangle_render.pl.layout, 0, 1, &model.gpu.ds, 0, NULL);
 
-    tri_render_push_const.model     = MatrixToFloatV(get_model());
-    tri_render_push_const.attr_mask = model.attr_mask;
-    tri_render_push_const.tri_count = model.tri_count;
-    tri_render_push_const.color     = (model.color) ? model.color : color_to_uint32_t(WHITE);
-    tri_render_push_const.clockwise = model.clockwise;
+    tri_render_push_const.model          = MatrixToFloatV(get_model());
+    tri_render_push_const.attribute_mask = model.attribute_mask;
+    tri_render_push_const.tri_count      = model.tri_count;
+    tri_render_push_const.base_color     = (model.base_color) ? model.base_color : color_to_uint32_t(WHITE);
+    tri_render_push_const.ccw            = model.ccw;
 
     group_x = ceilf(tri_render_push_const.tri_count/POINT_WORKGROUP_SIZE);
     vkCmdPushConstants(cb, standard.triangle_render.pl.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
-            sizeof(tri_render_push_const), &tri_render_push_const);
+                       sizeof(tri_render_push_const), &tri_render_push_const);
     vkCmdDispatch(cb, group_x, group_y, group_z);
 }
 
@@ -1866,86 +1868,23 @@ void alloc_point_render_ds(VkDescriptorSet *ds)
     vk_allocate_descriptor_sets(ctx.device.logical, ds,
                                 .descriptorPool = ctx.pool,
                                 .descriptorSetCount = 1,
-                                .pSetLayouts = &standard.ds_layouts[DS_LAYOUT_RENDER]);
+                                .pSetLayouts = &standard.ds_layouts[DS_LAYOUT_POINT_RENDER]);
 }
 
-void init_triangle_model_ds(Model *model)
+void update_triangle_model_ds(Model model)
 {
-    vk_allocate_descriptor_sets(ctx.device.logical, &model->ds,
-                                .descriptorPool = ctx.pool,
-                                .descriptorSetCount = 1,
-                                .pSetLayouts = &standard.ds_layouts[DS_LAYOUT_TRIANGLE_RENDER]);
-
-    size_t nil_size = 1*sizeof(model->nil_buffer);
-    size_t size = 0;
-
-    size = model->indices.count*sizeof(*model->indices.items);
-    if (size) {
-        model->indices_buff = create_compute_buffer(size, model->indices.items);
-    } else      model->indices_buff = create_compute_buffer(nil_size, &model->nil_buffer);
-
-    size = model->positions.count*sizeof(*model->positions.items);
-    if (size) {
-        model->position_buff = create_compute_buffer(size, model->positions.items);
-        model->attr_mask |= 1<<ATTRIBUTE_POSITION;
-    } else model->position_buff = create_compute_buffer(nil_size, &model->nil_buffer);
-
-    size = model->normals.count*sizeof(*model->normals.items);
-    if (size) {
-        model->normal_buff = create_compute_buffer(size, model->normals.items);
-        model->attr_mask |= 1<<ATTRIBUTE_NORMAL;
-    } else model->normal_buff = create_compute_buffer(nil_size, &model->nil_buffer);
-
-    size = model->tex_coords.count*sizeof(*model->tex_coords.items);
-    if (size) {
-        model->tex_coord_buff = create_compute_buffer(size, model->tex_coords.items);
-        model->attr_mask |= 1<<ATTRIBUTE_TEX_COORD;
-    } else model->tex_coord_buff = create_compute_buffer(nil_size, &model->nil_buffer);
-
-    size = model->tangets.count*sizeof(*model->tangets.items);
-    if (size) {
-        model->tanget_buff = create_compute_buffer(size, model->tangets.items);
-        model->attr_mask |= 1<<ATTRIBUTE_TANGET;
-    } else model->tanget_buff = create_compute_buffer(nil_size, &model->nil_buffer);
-
-    size = model->colors.count*sizeof(*model->colors.items);
-    if (size) {
-        model->color_buff = create_compute_buffer(size, model->colors.items);
-        model->attr_mask |= 1<<ATTRIBUTE_COLOR;
-    } else model->color_buff = create_compute_buffer(nil_size, &model->nil_buffer);
-}
-
-void destroy_model(Model model)
-{
-    /* for now we just free any memory, but this isn't super sophisticated, it would be better
-     * to have the user manage/reuse their own memory, but this will do for now */
-    da_free(model.positions);
-    da_free(model.normals);
-    da_free(model.tex_coords);
-    da_free(model.tangets);
-    da_free(model.colors);
-    da_free(model.indices);
-
-    destroy_buffer(model.indices_buff);
-    destroy_buffer(model.position_buff);
-    destroy_buffer(model.normal_buff);
-    destroy_buffer(model.tex_coord_buff);
-    destroy_buffer(model.tanget_buff);
-    destroy_buffer(model.color_buff);
-}
-
-void update_triangle_model(Model model)
-{
-    if (!standard.uniform_buff.info.buffer)
-        standard.uniform_buff = r_create_mapped_uniform_buffer(ctx.device, sizeof(standard.uniform_data));
+    // TODO: these buffers should always be created
+    if (!standard.uniform.buffer.info.buffer)
+        standard.uniform.buffer = r_create_mapped_uniform_buffer(ctx.device, sizeof(standard.uniform.data));
     if (!standard.frame_buffers[0].info.buffer)
         standard.frame_buffers[0] = create_software_frame_buffer(window.width, window.height);
-    assert(model.indices_buff.info.buffer);
-    assert(model.position_buff.info.buffer);
-    assert(model.normal_buff.info.buffer);
-    assert(model.tex_coord_buff.info.buffer);
-    assert(model.tanget_buff.info.buffer);
-    assert(model.color_buff.info.buffer);
+
+    assert(model.gpu.index.info.buffer);
+    assert(model.gpu.vertex.info.buffer);
+    assert(model.gpu.normal.info.buffer);
+    assert(model.gpu.tex_coord.info.buffer);
+    assert(model.gpu.tanget.info.buffer);
+    assert(model.gpu.color.info.buffer);
 
     VkWriteDescriptorSet writes[] = {
         /* standard_triangle_render.comp.glsl */
@@ -1954,56 +1893,56 @@ void update_triangle_model(Model model)
             .dstBinding = 0,
             .descriptorCount = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .pBufferInfo = &standard.uniform_buff.info,
-            .dstSet = model.ds,
+            .pBufferInfo = &standard.uniform.buffer.info,
+            .dstSet = model.gpu.ds,
         },
         {
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .dstBinding = 1,
             .descriptorCount = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &model.position_buff.info,
-            .dstSet = model.ds,
+            .pBufferInfo = &model.gpu.vertex.info,
+            .dstSet = model.gpu.ds,
         },
         {
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .dstBinding = 2,
             .descriptorCount = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &model.normal_buff.info,
-            .dstSet = model.ds,
+            .pBufferInfo = &model.gpu.normal.info,
+            .dstSet = model.gpu.ds,
         },
         {
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .dstBinding = 3,
             .descriptorCount = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &model.tex_coord_buff.info,
-            .dstSet = model.ds,
+            .pBufferInfo = &model.gpu.tex_coord.info,
+            .dstSet = model.gpu.ds,
         },
         {
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .dstBinding = 4,
             .descriptorCount = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &model.color_buff.info,
-            .dstSet = model.ds,
+            .pBufferInfo = &model.gpu.color.info,
+            .dstSet = model.gpu.ds,
         },
         {
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .dstBinding = 5,
             .descriptorCount = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &model.tanget_buff.info,
-            .dstSet = model.ds,
+            .pBufferInfo = &model.gpu.tanget.info,
+            .dstSet = model.gpu.ds,
         },
         {
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .dstBinding = 6,
             .descriptorCount = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &model.indices_buff.info,
-            .dstSet = model.ds,
+            .pBufferInfo = &model.gpu.index.info,
+            .dstSet = model.gpu.ds,
         },
         {
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -2011,7 +1950,7 @@ void update_triangle_model(Model model)
             .descriptorCount = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
             .pBufferInfo = &standard.frame_buffers[0].info,
-            .dstSet = model.ds,
+            .dstSet = model.gpu.ds,
         },
     };
     vkUpdateDescriptorSets(ctx.device.logical, ARRAY_LEN(writes), writes, 0, NULL);
@@ -2040,6 +1979,22 @@ void destroy_buffer(Rvk_Buffer buff)
 {
     r_destroy_rvk_buffer(ctx.device.logical, buff);
 }
+
+void destroy_texture(Rvk_Texture texture)
+{
+    r_destroy_texture(ctx.device.logical, texture);
+}
+
+Rvk_Buffer create_vertex_buffer(size_t size, void *vertices)
+{
+    return r_create_vertex_buffer(ctx.device, size, vertices);
+}
+
+Rvk_Buffer create_index_buffer(size_t size, void *indices)
+{
+    return r_create_index_buffer(ctx.device, size, indices);
+}
+
 
 void draw_text_at_base(Font font, const char *text, size_t text_len, int x, int y, Color color)
 {
@@ -2142,78 +2097,67 @@ void rotate_y(float angle)
         r_log(RVK_ERROR, "no matrix available to rotate y");
 }
 
-
-typedef struct {
-    String_Builder obj;
-    String_Builder mtl;
-} Obj_File_Data;
-
-void obj_file_reader(void *ctx, const char *file_name, int is_mtl, const char *obj_file_name, char **items, size_t *count)
+void destroy_model(Model model)
 {
-    UNUSED(obj_file_name);
+    da_free(model.cpu.positions);
+    da_free(model.cpu.normals);
+    da_free(model.cpu.tex_coords);
+    da_free(model.cpu.tangets);
+    da_free(model.cpu.colors);
+    da_free(model.cpu.indices);
 
-    Obj_File_Data *file_data = (Obj_File_Data *)ctx;
-    String_Builder *sb = (is_mtl) ? &file_data->mtl : &file_data->obj;
-    if (!read_entire_file(file_name, sb)) {
-        *count = 0;
-        return;
-    }
-
-    *items = sb->items;
-    *count = sb->count;
+    destroy_buffer(model.gpu.vertex);
+    destroy_buffer(model.gpu.index);
+    destroy_buffer(model.gpu.normal);
+    destroy_buffer(model.gpu.tex_coord);
+    destroy_buffer(model.gpu.tanget);
+    destroy_buffer(model.gpu.color);
 }
 
-Model load_obj_model(const char *file_name)
+void load_model_gpu(Model *model)
 {
-    Model model = {0};
-    unsigned int flags = TINYOBJ_FLAG_TRIANGULATE;
-    tinyobj_attrib_t attr = {0};
-    tinyobj_shape_t *shapes = NULL;
-    size_t num_shapes = 0;
-    tinyobj_material_t *materials = NULL;
-    size_t num_materials = 0;
-    Obj_File_Data file_data = {0};
+    /* vertex and index buffers are required, everything else is optional */
+    size_t size = model->cpu.positions.count*sizeof(*model->cpu.positions.items);
+    assert(size);
+    model->gpu.vertex = create_compute_buffer(size, model->cpu.positions.items);
+    size = model->cpu.indices.count*sizeof(*model->cpu.indices.items);
+    assert(size);
+    model->gpu.index = create_compute_buffer(size, model->cpu.indices.items);
 
-    int res = tinyobj_parse_obj(&attr, &shapes, &num_shapes, &materials,
-                                &num_materials, file_name, obj_file_reader, &file_data, flags);
-    if (res != TINYOBJ_SUCCESS) {
-        fprintf(stderr, "failed to parse obj file %s, error: %d\n", file_name, res);
-        return model;
-    }
+    size = model->cpu.normals.count*sizeof(*model->cpu.normals.items);
+    if (size) {
+        assert(model->gpu.normal.info.buffer == NULL);
+        model->gpu.normal = create_compute_buffer(size, model->cpu.normals.items);
+        model->attribute_mask |= (1<<ATTRIBUTE_NORMAL);
+    } else model->gpu.normal = create_compute_buffer(sizeof(model->nil_buffer), &model->nil_buffer);
 
-    if (materials) printf("WARNING: not handling materials\n");
+    size = model->cpu.tex_coords.count*sizeof(*model->cpu.tex_coords.items);
+    if (size) {
+        assert(model->gpu.tex_coord.info.buffer == NULL);
+        model->gpu.tex_coord = create_compute_buffer(size, model->cpu.tex_coords.items);
+        model->attribute_mask |= (1<<ATTRIBUTE_TEX_COORD);
+    } else model->gpu.tex_coord = create_compute_buffer(sizeof(model->nil_buffer), &model->nil_buffer);
 
-    if (attr.num_vertices)  model.attr_mask |= (1<<ATTRIBUTE_POSITION);
-    if (attr.num_normals)   model.attr_mask |= (1<<ATTRIBUTE_NORMAL);
-    if (attr.num_texcoords) model.attr_mask |= (1<<ATTRIBUTE_TEX_COORD);
+    size = model->cpu.colors.count*sizeof(*model->cpu.colors.items);
+    if (size) {
+        assert(model->gpu.color.info.buffer == NULL);
+        model->gpu.color = create_compute_buffer(size, model->cpu.colors.items);
+        model->attribute_mask |= (1<<ATTRIBUTE_COLOR);
+    } else model->gpu.color = create_compute_buffer(sizeof(model->nil_buffer), &model->nil_buffer);
 
-    for (size_t i = 0; i < attr.num_faces; i++) {
-        int v_idx  = attr.faces[i].v_idx;
-        int vt_idx = attr.faces[i].vt_idx;
-        int vn_idx = attr.faces[i].vn_idx;
-        if (attr.num_vertices) {
-            Vector3 v = {attr.vertices[v_idx*3 + 0], attr.vertices[v_idx*3 + 1], attr.vertices[v_idx*3 + 2]};
-            da_append(&model.positions, v);
-        }
-        if (attr.num_normals) {
-            Vector3 n = {attr.normals[vn_idx*3 + 0], attr.normals[vn_idx*3 + 1], attr.normals[vn_idx*3 + 2]};
-            da_append(&model.normals, n);
-        }
-        if (attr.num_texcoords) {
-            Vector2 t = {attr.texcoords[vt_idx*2 + 0], attr.texcoords[vt_idx*2 + 1]};
-            da_append(&model.tex_coords, t);
-        }
+    size = model->cpu.tangets.count*sizeof(*model->cpu.tangets.items);
+    if (size) {
+        assert(model->gpu.tanget.info.buffer == NULL);
+        model->gpu.tanget = create_compute_buffer(size, model->cpu.tangets.items);
+        model->attribute_mask |= (1<<ATTRIBUTE_TANGET);
+    } else model->gpu.tanget = create_compute_buffer(sizeof(model->nil_buffer), &model->nil_buffer);
 
-        da_append(&model.indices, i);
-    }
+    /* allocate descriptor set */
+    assert(standard.ds_layouts[DS_LAYOUT_TRIANGLE_RENDER]);
+    vk_allocate_descriptor_sets(ctx.device.logical, &model->gpu.ds,
+                                .descriptorPool = ctx.pool,
+                                .descriptorSetCount = 1,
+                                .pSetLayouts = &standard.ds_layouts[DS_LAYOUT_TRIANGLE_RENDER]);
 
-    model.tri_count = model.indices.count/3;
-
-    tinyobj_attrib_free(&attr);
-    tinyobj_shapes_free(shapes, num_shapes);
-    tinyobj_materials_free(materials, num_materials);
-    // sb_free(obj.file_data.mtl);
-    // sb_free(obj.file_data.obj);
-
-    return model;
+    update_triangle_model_ds(*model);
 }

@@ -6,10 +6,10 @@
 layout (binding = 0) uniform UBO {
     mat4 proj;
     mat4 view;
-    mat4 model;
+    mat4 model; // TODO: get rid of this
     int frame_width;
     int frame_height;
-    uint bg_color;
+    uint bg_color; // TODO: also get rid of this
     int padding_1;
     vec4 camera_pos;
 } ubo;
@@ -49,14 +49,15 @@ layout(push_constant) uniform constants {
     uint attr_mask;
     uint tri_count;
     uint color;
-    uint clockwise;
+    uint ccw;
 } pc;
 
-#define ATTRIBUTE_POSITION  0
-#define ATTRIBUTE_NORMAL    1
-#define ATTRIBUTE_TEX_COORD 2
-#define ATTRIBUTE_TANGET    3
-#define ATTRIBUTE_COLOR     4
+#define ATTRIBUTE_NORMAL    0
+#define ATTRIBUTE_TEX_COORD 1
+#define ATTRIBUTE_TANGET    2
+#define ATTRIBUTE_COLOR     3
+// #define BIAS (0.00001f)
+#define BIAS (1.0000f)
 
 int edge_cross(ivec2 v0, ivec2 v1, ivec2 p)
 {
@@ -169,15 +170,17 @@ void main()
     int bias0 = 0;
     int bias1 = 0;
     int bias2 = 0;
-    if (pc.clockwise > 0) {
-        bias0 = is_top_left_cw(v0, v1) ? 0 : -1;
-        bias1 = is_top_left_cw(v1, v2) ? 0 : -1;
-        bias2 = is_top_left_cw(v2, v0) ? 0 : -1;
-    } else {
-        bias0 = is_top_left_ccw(v0, v1) ? 0 : 1;
-        bias1 = is_top_left_ccw(v1, v2) ? 0 : 1;
-        bias2 = is_top_left_ccw(v2, v0) ? 0 : 1;
-    }
+
+    /* I will come back to this when it either becomes relevant, or I switch to fixed point math */
+    // if (pc.clockwise > 0) {
+    //     bias0 = is_top_left_cw(v0, v1) ? 0 : -1;
+    //     bias1 = is_top_left_cw(v1, v2) ? 0 : -1;
+    //     bias2 = is_top_left_cw(v2, v0) ? 0 : -1;
+    // } else {
+    //     bias0 = is_top_left_ccw(v0, v1) ? 0 : 1;
+    //     bias1 = is_top_left_ccw(v1, v2) ? 0 : 1;
+    //     bias2 = is_top_left_ccw(v2, v0) ? 0 : 1;
+    // }
 
     float area = float(edge_cross(v0, v1, v2));
     vec3 light_pos = vec3(5.0, 10.0, 0.0);
@@ -185,13 +188,13 @@ void main()
     for (int y = y_min; y <= y_max; y++) {
         for (int x = x_min; x <= x_max; x++) {
             ivec2 p = ivec2(x, y);
-            int w0 = edge_cross(v0, v1, p);
-            int w1 = edge_cross(v1, v2, p);
-            int w2 = edge_cross(v2, v0, p);
-            /* assumes triangle is clockwise */
+            int w0 = edge_cross(v1, v2, p) + bias0;
+            int w1 = edge_cross(v2, v0, p) + bias1;
+            int w2 = edge_cross(v0, v1, p) + bias2;
+
             bool inside = false;
-            if (pc.clockwise > 0) inside = (w0 + bias0) >= 0 && (w1 + bias1) >= 0 && (w2 + bias2) >= 0;
-            else                  inside = (w0 + bias0) <= 0 && (w1 + bias1) <= 0 && (w2 + bias2) <= 0;
+            if (pc.ccw > 0) inside = w0 <= 0 && w1 <= 0 && w2 <= 0;
+            else            inside = w0 >= 0 && w1 >= 0 && w2 >= 0;
             if (!inside) continue;
 
             float alpha = w0/area;

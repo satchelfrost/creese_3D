@@ -619,7 +619,7 @@ VkPhysicalDevice r_pick_physical_device(VkInstance instance)
                 default: device_type = "N/A";
                 }
                 r_log(RVK_INFO, "Selected %s-GPU: %s", device_type, props.deviceName);
-                return devices[i];
+                return devices[j];
             }
         }
     }

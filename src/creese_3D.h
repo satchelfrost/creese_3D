@@ -1,6 +1,7 @@
 #ifndef CREESE_3D_H_
 #define CREESE_3D_H_
 
+// TODO: certain vulkan resources should always be created regardless
 // TODO: make the attribute switches do something in the triangle render shader
 // TODO: decide if I actually want to pass indices, or just have it implied that it's in order 
 // TODO: promote the simple shapes like cube to API
@@ -326,7 +327,6 @@ typedef struct {
 } Font;
 
 typedef enum {
-    ATTRIBUTE_POSITION,
     ATTRIBUTE_NORMAL,
     ATTRIBUTE_TEX_COORD,
     ATTRIBUTE_TANGET,
@@ -335,39 +335,43 @@ typedef enum {
 } Attribute;
 
 typedef struct {
-    uint32_t attr_mask;
-    struct {  Vector3 *items; size_t count; size_t capacity; } positions;
-    struct {  Vector3 *items; size_t count; size_t capacity; } normals;
-    struct {  Vector2 *items; size_t count; size_t capacity; } tex_coords;
-    struct {  Vector2 *items; size_t count; size_t capacity; } tangets;
-    struct { uint32_t *items; size_t count; size_t capacity; } colors;
-    struct { uint32_t *items; size_t count; size_t capacity; } indices;
-
-    // vulkan cannot have a zero size buffer
-    // so this serves as something that's nonzero, but
-    // used when a model does not have an attribute. For example,
-    // suppose a model doesn't have tangets, but the shader still
-    // has a slot for them, well in that case the nil buffer gets bound to that slot
-    size_t nil_buffer;
-
+    uint32_t attribute_mask;
+    bool ccw;
+    uint base_color;
     size_t tri_count;
 
-    // vulkan buffers
-    Rvk_Buffer position_buff;
-    Rvk_Buffer normal_buff;
-    Rvk_Buffer tex_coord_buff;
-    Rvk_Buffer tanget_buff;
-    Rvk_Buffer color_buff;
-    Rvk_Buffer indices_buff;
+    struct {
+        struct {  Vector3 *items; size_t count; size_t capacity; } positions;
+        struct {  Vector3 *items; size_t count; size_t capacity; } normals;
+        struct {  Vector2 *items; size_t count; size_t capacity; } tex_coords;
+        struct {  Vector2 *items; size_t count; size_t capacity; } tangets;
+        struct { uint32_t *items; size_t count; size_t capacity; } colors;
+        struct { uint32_t *items; size_t count; size_t capacity; } indices;
+    } cpu;
 
-    VkDescriptorSet ds;
-    bool clockwise;
-    uint color;
+    size_t nil_buffer;
+
+    struct {
+        Rvk_Buffer vertex;
+        Rvk_Buffer normal;
+        Rvk_Buffer tex_coord;
+        Rvk_Buffer tanget;
+        Rvk_Buffer color;
+        Rvk_Buffer index;
+        VkDescriptorSet ds;
+    } gpu;
+
 } Model;
 
-Model load_obj_model(const char *file_name);
+Model load_model_from_obj(const char *file_name);
+Model load_model_from_obj_to_host_mem(const char *file_name);
 void draw_model(Model model);
 void destroy_model(Model model);
+void load_model_gpu(Model *model);
+Rvk_Buffer create_vertex_buffer(size_t size, void *vertices);
+Rvk_Buffer create_index_buffer(size_t size, void *indices);
+
+
 void init_triangle_model_ds(Model *model);
 void update_triangle_model(Model model);
 
@@ -387,6 +391,7 @@ void point_hidden_surface_removal();
 void point_hole_filling();
 Rvk_Buffer create_compute_buffer(size_t size, void *data);
 void destroy_buffer(Rvk_Buffer buff);
+void destroy_texture(Rvk_Texture texture);
 void compute_to_frag_sample_image_barrier(VkCommandBuffer cb, VkImage image);
 void alloc_point_render_ds(VkDescriptorSet *ds);
 void update_point_render_ds(Rvk_Buffer buff, VkDescriptorSet ds);

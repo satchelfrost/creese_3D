@@ -6,12 +6,14 @@
 #define LINUX BUILD "linux/"
 #define WINDOWS BUILD "windows/"
 #define SRC "src/"
-#define CREESE_3D SRC "creese_3D_engine/"
+#define ENGINE SRC "engine/"
 #define EXTERNAL SRC "external/"
 #define SHADERS "shaders/"
 
-const char *creese_3D_modules[] = {
-    "creese_3D",
+const char *creese_3D_srcs[] = {
+    SRC"creese_3D.h",
+    ENGINE"creese_3D.c",
+    ENGINE"obj_loader.c",
 };
 
 const char *shaders[] = {
@@ -29,7 +31,7 @@ const char *shaders[] = {
 const char *examples[] = {
     "example_points",
     "example_text",
-    "example_triangle_mesh",
+    "example_model",
 };
 
 bool compile_shaders(Cmd *cmd)
@@ -68,29 +70,27 @@ bool build_glfw(Cmd *cmd, const char *target)
     return cmd_run(cmd);
 }
 
-bool build_(Cmd *cmd, bool force, const char *target)
+bool build_creese_3D(Cmd *cmd, bool force, const char *target)
 {
     const char *build_dir = (target == "linux") ? LINUX : WINDOWS;
+    const char *o = temp_sprintf("%screese_3D.o", build_dir);
+    const char *c = temp_sprintf(ENGINE"creese_3D.c");
 
-    for (size_t i = 0; i < ARRAY_LEN(creese_3D_modules); i++) {
-        const char *o = temp_sprintf("%s%s.o", build_dir, creese_3D_modules[i]);
-        const char *c = temp_sprintf(CREESE_3D"%s.c", creese_3D_modules[i]);
-        int module_touched = needs_rebuild1(o, c);
-            if (module_touched < 0) {
-            nob_log(ERROR, "needs rebuild failed for module %s", creese_3D_modules[i]);
-            return false;
-        }
-        if (!module_touched && !force) continue;
-
-        cmd_append(cmd, (target == "linux") ? "gcc" : "x86_64-w64-mingw32-gcc", "-Wall", "-Wextra", "-g");
-        if (target == "linux") cmd_append(cmd, "-DVULKAN_VALIDATION_ON"); // only use validation if not windows
-        cmd_append(cmd, "-I./"EXTERNAL);
-        cmd_append(cmd, "-I./"EXTERNAL"glfw/include");
-        cmd_append(cmd, "-c", c);
-        cmd_append(cmd, "-o", o);
-        cmd_append(cmd, "-lm");
-        if (!cmd_run(cmd)) return false;
+    int creese_3D_touched = needs_rebuild(o, creese_3D_srcs, ARRAY_LEN(creese_3D_srcs));
+    if (creese_3D_touched < 0) {
+        nob_log(ERROR, "needs rebuild failed for %s", o);
+        return false;
     }
+    if (!creese_3D_touched && !force) return true;
+
+    cmd_append(cmd, (target == "linux") ? "gcc" : "x86_64-w64-mingw32-gcc", "-Wall", "-Wextra", "-g");
+    if (target == "linux") cmd_append(cmd, "-DVULKAN_VALIDATION_ON"); // only use validation if not windows
+    cmd_append(cmd, "-I./"EXTERNAL);
+    cmd_append(cmd, "-I./"EXTERNAL"glfw/include");
+    cmd_append(cmd, "-c", c);
+    cmd_append(cmd, "-o", o);
+    cmd_append(cmd, "-lm");
+    if (!cmd_run(cmd)) return false;
 
     return true;
 }
@@ -102,17 +102,15 @@ bool build_example(Cmd *cmd, bool force, const char *target, const char *example
     const char *c = temp_sprintf(SRC"%s.c", example_name);
     const char *e = temp_sprintf("%s%s%s", build_dir, example_name, (target == "windows") ? ".exe" : "");
     const char *glfw = temp_sprintf("%srglfw.o", build_dir);
-    File_Paths creese_3D_o_files = {0};
+    const char *creese_3D = temp_sprintf("%screese_3D.o", build_dir);
 
-    for (size_t i = 0; i < ARRAY_LEN(creese_3D_modules); i++)
-        da_append(&creese_3D_o_files, temp_sprintf("%s%s.o", build_dir, creese_3D_modules[i]));
 
     int src_touched       = needs_rebuild1(e, c);
-    int creese_3D_touched = needs_rebuild(e, creese_3D_o_files.items, creese_3D_o_files.count);
+    int creese_3D_touched = needs_rebuild1(e, creese_3D);
     int glfw_touched      = needs_rebuild1(e, glfw);
-    if (src_touched < 0)      nob_log(ERROR, "needs rebuild command failed for source %s", example_name);
+    if (src_touched < 0)       nob_log(ERROR, "needs rebuild command failed for source %s", example_name);
     if (creese_3D_touched < 0) nob_log(ERROR, "needs rebuild command failed for creese_3D");
-    if (glfw_touched < 0)     nob_log(ERROR, "needs rebuild command failed for example glfw");
+    if (glfw_touched < 0)      nob_log(ERROR, "needs rebuild command failed for example glfw");
     if (!src_touched && !creese_3D_touched && !glfw_touched && !force) return true;
 
     cmd_append(cmd, (target == "linux") ? "gcc" : "x86_64-w64-mingw32-gcc", "-Wall", "-Wextra", "-g");
@@ -120,9 +118,7 @@ bool build_example(Cmd *cmd, bool force, const char *target, const char *example
     cmd_append(cmd, "-I./"EXTERNAL"glfw/include");
     cmd_append(cmd, "-I./"SRC);
     cmd_append(cmd, "-o", e);
-    cmd_append(cmd, c, glfw);
-    for (size_t i = 0; i < creese_3D_o_files.count; i++)
-        cmd_append(cmd, creese_3D_o_files.items[i]);
+    cmd_append(cmd, c, glfw, creese_3D);
     if (target == "linux") cmd_append(cmd, "-lm", "-lvulkan");
     else                   cmd_append(cmd, "-L./"EXTERNAL, "-l:vulkan-1.lib", "-lgdi32");
     return cmd_run(cmd);
@@ -133,10 +129,11 @@ void log_usage(const char *program)
     printf("usage: %s [options]\n", program);
     printf("    --help\n");
     printf("    --clean, force clean build\n");
+    printf("    --list, lists example numbers/names\n");
     printf("    --target, build target (e.g. windows and linux)\n");
-    printf("    --run <executable> <args>, run after building (only for linux)\n");
-    printf("    --renderdoc <executable> <args>, (only for linux) expects renderdoc/renderdoccmd in path (https://renderdoc.org/builds)\n");
-    printf("    --debug <executable> <args>, (only for linux) expects gf2 in path (https://github.com/nakst/gf)\n");
+    printf("    --run <example number> <args>, run after building (only for linux)\n");
+    printf("    --renderdoc <example number> <args>, (only for linux) expects renderdoc/renderdoccmd in path (https://renderdoc.org/builds)\n");
+    printf("    --debug <example number> <args>, (only for linux) expects renderdoc/renderdoccmd in path (https://renderdoc.org/builds)\n");
 }
 
 typedef struct {
@@ -148,11 +145,13 @@ typedef struct {
 struct {
     const char *program;
     const char *target;
-    const char *executable;
+    int example_number;
     bool clean;
     bool renderdoc;
     bool debug;
     bool run;
+    bool help;
+    bool list;
     Args args;
 } config;
 
@@ -163,29 +162,25 @@ bool parse_cmd_args(int argc, char **argv)
     while (argc) {
         const char *flag = shift(argv, argc);
         if (!strcmp("--help", flag)) {
-            log_usage(config.program);
-            return false;
+            config.help = true;
+            return true;
         } else if (!strcmp("--clean", flag)) {
             config.clean = true;
             nob_log(INFO, "executing clean build");
-        } else if (!strcmp("--debug", flag)) {
-            config.debug= true;
-            if (argc <= 0) {
-                nob_log(ERROR, "debug usage: `./nob --debug <executable> <args>`");
-                return false;
-            }
-            config.executable = shift(argv, argc);
-            while (argc) {
-                const char *arg = shift(argv, argc);
-                da_append(&config.args, arg);
-            }
+        } else if (!strcmp("--list", flag)) {
+            config.list = true;
         } else if (!strcmp("--renderdoc", flag)) {
             config.renderdoc = true;
             if (argc <= 0) {
-                nob_log(ERROR, "renderdoc usage: `./nob --renderdoc <executable> <args>`");
+                nob_log(ERROR, "usage: `./nob --renderdoc <executable> <args>`");
                 return false;
             }
-            config.executable = shift(argv, argc);
+            config.example_number = atoi(shift(argv, argc));
+            if (config.example_number < 0 || config.example_number >= ARRAY_LEN(examples)) {
+                nob_log(ERROR, "example number %d was out of range [0, %zu]", config.example_number, ARRAY_LEN(examples)-1);
+                nob_log(ERROR, "usage: `./nob --renderdoc <example number> <args>`");
+                return false;
+            }
             while (argc) {
                 const char *arg = shift(argv, argc);
                 da_append(&config.args, arg);
@@ -193,10 +188,31 @@ bool parse_cmd_args(int argc, char **argv)
         } else if (!strcmp("--run", flag)) {
             config.run = true;
             if (argc <= 0) {
-                nob_log(ERROR, "--run usage: `./nob --run <executable> <args>`");
+                nob_log(ERROR, "--run usage: `./nob --run <example number> <args>`");
                 return false;
             }
-            config.executable = shift(argv, argc);
+            config.example_number = atoi(shift(argv, argc));
+            if (config.example_number < 0 || config.example_number >= ARRAY_LEN(examples)) {
+                nob_log(ERROR, "example number %d was out of range [0, %zu]", config.example_number, ARRAY_LEN(examples)-1);
+                nob_log(ERROR, "--run usage: `./nob --run <example number> <args>`");
+                return false;
+            }
+            while (argc) {
+                const char *arg = shift(argv, argc);
+                da_append(&config.args, arg);
+            }
+        } else if (!strcmp("--debug", flag)) {
+            config.debug = true;
+            if (argc <= 0) {
+                nob_log(ERROR, "--debug usage: `./nob --debug <example number> <args>`");
+                return false;
+            }
+            config.example_number = atoi(shift(argv, argc));
+            if (config.example_number < 0 || config.example_number >= ARRAY_LEN(examples)) {
+                nob_log(ERROR, "example number %d was out of range [0, %zu]", config.example_number, ARRAY_LEN(examples)-1);
+                nob_log(ERROR, "--debug usage: `./nob --debug <example number> <args>`");
+                return false;
+            }
             while (argc) {
                 const char *arg = shift(argv, argc);
                 da_append(&config.args, arg);
@@ -206,7 +222,7 @@ bool parse_cmd_args(int argc, char **argv)
             if (!strcmp(target, "windows")) config.target = "windows";
             if (!strcmp(target, "linux"))   config.target = "linux";
         } else {
-            nob_log(ERROR, "unrecognized flag %s", flag);
+            nob_log(ERROR, "unrecognized flag `%s`", flag);
             log_usage(config.program);
             return false;
         }
@@ -227,8 +243,7 @@ bool launch_renderdoc(Cmd *cmd)
 {
     /* first run the renderdoc cmd to capture the snapshot */
     cmd_append(cmd, "renderdoccmd", "capture", "-d", ".", "-c", "snapshot", "-w");
-    assert(config.executable);
-    cmd_append(cmd, config.executable);
+    cmd_append(cmd, temp_sprintf("./"LINUX"%s", examples[config.example_number]));
     for (size_t i = 0; i < config.args.count; i++)
         cmd_append(cmd, config.args.items[i]);
     if (!cmd_run(cmd)) return false;
@@ -257,8 +272,7 @@ bool launch_renderdoc(Cmd *cmd)
 
 bool launch_exec(Cmd *cmd)
 {
-    assert(config.executable);
-    cmd_append(cmd, config.executable);
+    cmd_append(cmd, temp_sprintf("./"LINUX"%s", examples[config.example_number]));
     for (size_t i = 0; i < config.args.count; i++)
         cmd_append(cmd, config.args.items[i]);
     if (!cmd_run(cmd)) return false;
@@ -268,9 +282,12 @@ bool launch_exec(Cmd *cmd)
 
 bool launch_gf2(Cmd *cmd)
 {
-    assert(config.executable);
-    if (config.args.count > 1) TODO("launch debugger with args");
-    cmd_append(cmd, "gf2", "-ex", "start", config.executable);
+    cmd_append(cmd, "gf2");
+    if (config.args.count) cmd_append(cmd, "--args");
+    cmd_append(cmd, "-ex", "start");
+    cmd_append(cmd, temp_sprintf("./"LINUX"%s", examples[config.example_number]));
+    for (size_t i = 0; i < config.args.count; i++)
+        cmd_append(cmd, config.args.items[i]);
     return cmd_run(cmd);
 }
 
@@ -279,6 +296,14 @@ int main(int argc, char **argv)
     NOB_GO_REBUILD_URSELF(argc, argv);
 
     if (!parse_cmd_args(argc, argv))   return 1;
+
+    if (config.help) { log_usage(config.program); return 0; }
+    if (config.list) {
+        for (size_t i = 0; i < ARRAY_LEN(examples); i++)
+            printf("%zu - %s\n", i, examples[i]);
+        return 0;
+    }
+
     if (!mkdir_if_not_exists(BUILD))   return 1;
     if (!mkdir_if_not_exists(LINUX))   return 1;
     if (!mkdir_if_not_exists(WINDOWS)) return 1;
@@ -286,7 +311,7 @@ int main(int argc, char **argv)
     Cmd cmd = {0};
 
     if (!build_glfw(&cmd, config.target)) return 1;
-    if (!build_(&cmd, config.clean, config.target)) return 1;
+    if (!build_creese_3D(&cmd, config.clean, config.target)) return 1;
     for (size_t i = 0; i < ARRAY_LEN(examples); i++)
         if (!build_example(&cmd, config.clean, config.target, examples[i])) return 1;
     if (!compile_shaders(&cmd)) return 1;
