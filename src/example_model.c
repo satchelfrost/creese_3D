@@ -192,7 +192,7 @@ int main()
     models[MODEL_TRIANGLE].tri_count = 1;
 
     /* note we're not using `load_model_from_obj` because we want to manually call load_model_gpu */
-    models[MODEL_BUNNY] = load_model_from_obj_to_host_mem("assets/bunny.obj");
+    models[MODEL_BUNNY] = load_model_from_obj_into_memory("assets/bunny.obj");
     models[MODEL_BUNNY].base_color = color_to_uint32_t(RED);
 
     /* load models to the gpu */

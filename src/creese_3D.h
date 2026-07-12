@@ -363,13 +363,20 @@ typedef struct {
 
 } Model;
 
+/* obj */
 Model load_model_from_obj(const char *file_name);
-Model load_model_from_obj_to_host_mem(const char *file_name);
+Model load_model_from_obj_into_memory(const char *file_name);
+
+/* gltf */
+Model load_model_from_gltf_into_memory(const char *file_name);
+
 void draw_model(Model model);
 void destroy_model(Model model);
 void load_model_gpu(Model *model);
 Rvk_Buffer create_vertex_buffer(size_t size, void *vertices);
 Rvk_Buffer create_index_buffer(size_t size, void *indices);
+
+
 
 
 void init_triangle_model_ds(Model *model);

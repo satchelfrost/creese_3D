@@ -21,7 +21,7 @@ void obj_file_reader(void *ctx, const char *file_name, int is_mtl, const char *o
     *count = sb->count;
 }
 
-Model load_model_from_obj_to_host_mem(const char *file_name)
+Model load_model_from_obj_into_memory(const char *file_name)
 {
     Model model = {0};
     unsigned int flags = TINYOBJ_FLAG_TRIANGULATE;
@@ -100,7 +100,7 @@ Model load_model_from_obj_to_host_mem(const char *file_name)
 
 Model load_model_from_obj(const char *file_name)
 {
-    Model model = load_model_from_obj_to_host_mem(file_name);
+    Model model = load_model_from_obj_into_memory(file_name);
     load_model_gpu(&model);
     return model;
 }

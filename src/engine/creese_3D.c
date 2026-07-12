@@ -22,6 +22,7 @@
 
 // engine modules
 #include "obj_loader.c"
+#include "gltf_loader.c"
 
 #ifndef Z_NEAR
     #define Z_NEAR 0.1

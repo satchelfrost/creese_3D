@@ -14,6 +14,7 @@ const char *creese_3D_srcs[] = {
     SRC"creese_3D.h",
     ENGINE"creese_3D.c",
     ENGINE"obj_loader.c",
+    ENGINE"gltf_loader.c",
 };
 
 const char *shaders[] = {
@@ -32,6 +33,7 @@ const char *examples[] = {
     "example_points",
     "example_text",
     "example_model",
+    "example_gltf",
 };
 
 bool compile_shaders(Cmd *cmd)
@@ -318,7 +320,12 @@ int main(int argc, char **argv)
 
     if (config.run)       if (!launch_exec(&cmd))      return 1;
     if (config.renderdoc) if (!launch_renderdoc(&cmd)) return 1;
-    if (config.debug)     if (!launch_gf2(&cmd))       return 1;
+    if (config.debug) {
+        if (!launch_gf2(&cmd)) {
+            printf("To install gf2 clone https://github.com/nakst/gf\n");
+            return 1;
+        }
+    }
 
     return 0;
 }
