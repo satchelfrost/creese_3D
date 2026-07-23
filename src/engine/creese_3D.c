@@ -1996,7 +1996,6 @@ Rvk_Buffer create_index_buffer(size_t size, void *indices)
     return r_create_index_buffer(ctx.device, size, indices);
 }
 
-
 void draw_text_at_base(Font font, const char *text, size_t text_len, int x, int y, Color color)
 {
     /* draw text only reads/writes to/from fb0 */

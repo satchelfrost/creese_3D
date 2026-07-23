@@ -339,28 +339,46 @@ typedef struct {
     bool ccw;
     uint base_color;
     size_t tri_count;
+    size_t albedo_image_index;
+    size_t metallic_roughness_image_index;
+    size_t normal_image_index;
 
     struct {
-        struct {  Vector3 *items; size_t count; size_t capacity; } positions;
+        struct {  Vector3 *items; size_t count; size_t capacity; } positions; // required
+        struct { uint32_t *items; size_t count; size_t capacity; } indices;   // required
         struct {  Vector3 *items; size_t count; size_t capacity; } normals;
-        struct {  Vector2 *items; size_t count; size_t capacity; } tex_coords;
+        struct {  Vector2 *items; size_t count; size_t capacity; } tex_coords; // TODO: rename to uvs
         struct {  Vector2 *items; size_t count; size_t capacity; } tangets;
         struct { uint32_t *items; size_t count; size_t capacity; } colors;
-        struct { uint32_t *items; size_t count; size_t capacity; } indices;
+        size_t phony_attribute;
     } cpu;
-
-    size_t nil_buffer;
 
     struct {
         Rvk_Buffer vertex;
+        Rvk_Buffer index;
         Rvk_Buffer normal;
         Rvk_Buffer tex_coord;
         Rvk_Buffer tanget;
         Rvk_Buffer color;
-        Rvk_Buffer index;
         VkDescriptorSet ds;
     } gpu;
+} Mesh;
 
+typedef enum {
+    IMAGE_TYPE_UNORM,
+    IMAGE_TYPE_SRGB,
+} Creese_Image_Type;
+
+typedef struct {
+    Creese_Image_Type type;
+    int width, height;
+    void *data;
+} Creese_Image;
+
+typedef struct {
+    struct {         Mesh *items; size_t count; size_t capacity; } meshes;
+    struct {  Rvk_Texture *items; size_t count; size_t capacity; } textures;
+    struct { Creese_Image *items; size_t count; size_t capacity; } images;
 } Model;
 
 /* obj */
@@ -375,9 +393,6 @@ void destroy_model(Model model);
 void load_model_gpu(Model *model);
 Rvk_Buffer create_vertex_buffer(size_t size, void *vertices);
 Rvk_Buffer create_index_buffer(size_t size, void *indices);
-
-
-
 
 void init_triangle_model_ds(Model *model);
 void update_triangle_model(Model model);

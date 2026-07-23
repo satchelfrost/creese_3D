@@ -2,8 +2,8 @@
 
 int main()
 {
-    Model model = load_model_from_gltf_into_memory("assets/psx/scene.gltf");
-    return 0;
+    // Model model = load_model_from_gltf_into_memory("assets/psx/scene.gltf");
+    Model model = load_model_from_gltf_into_memory("assets/robot.glb");
 
     init_window(500, 500, "loading gltf");
 
