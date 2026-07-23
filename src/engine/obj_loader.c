@@ -6,13 +6,13 @@ typedef struct {
     String_Builder mtl;
 } Obj_File_Data;
 
-void obj_file_reader(void *ctx, const char *file_name, int is_mtl, const char *obj_file_name, char **items, size_t *count)
+void obj_file_reader(void *ctx, const char *file_path, int is_mtl, const char *obj_file_path, char **items, size_t *count)
 {
-    UNUSED(obj_file_name);
+    UNUSED(obj_file_path);
 
     Obj_File_Data *file_data = (Obj_File_Data *)ctx;
     String_Builder *sb = (is_mtl) ? &file_data->mtl : &file_data->obj;
-    if (!read_entire_file(file_name, sb)) {
+    if (!read_entire_file(file_path, sb)) {
         *count = 0;
         return;
     }
@@ -21,7 +21,7 @@ void obj_file_reader(void *ctx, const char *file_name, int is_mtl, const char *o
     *count = sb->count;
 }
 
-Model load_model_from_obj_into_memory(const char *file_name)
+Model load_model_from_obj_into_memory(const char *file_path)
 {
     Model model = {0};
     Mesh mesh = {0};
@@ -34,9 +34,9 @@ Model load_model_from_obj_into_memory(const char *file_name)
     Obj_File_Data file_data = {0};
 
     int res = tinyobj_parse_obj(&attr, &shapes, &num_shapes, &materials,
-                                &num_materials, file_name, obj_file_reader, &file_data, flags);
+                                &num_materials, file_path, obj_file_reader, &file_data, flags);
     if (res != TINYOBJ_SUCCESS) {
-        fprintf(stderr, "failed to parse obj file %s, error: %d\n", file_name, res);
+        fprintf(stderr, "failed to parse obj file %s, error: %d\n", file_path, res);
         return model;
     }
 
@@ -46,7 +46,7 @@ Model load_model_from_obj_into_memory(const char *file_name)
     }
 
     if (attr.num_normals)   mesh.attribute_mask |= (1<<ATTRIBUTE_NORMAL);
-    if (attr.num_texcoords) mesh.attribute_mask |= (1<<ATTRIBUTE_TEX_COORD);
+    if (attr.num_texcoords) mesh.attribute_mask |= (1<<ATTRIBUTE_UV);
 
     for (size_t i = 0; i < attr.num_faces; i++) {
         int v_idx  = attr.faces[i].v_idx;
@@ -62,7 +62,7 @@ Model load_model_from_obj_into_memory(const char *file_name)
         }
         if (attr.num_texcoords) {
             Vector2 t = {attr.texcoords[vt_idx*2 + 0], attr.texcoords[vt_idx*2 + 1]};
-            da_append(&mesh.cpu.tex_coords, t);
+            da_append(&mesh.cpu.uvs, t);
         }
 
         da_append(&mesh.cpu.indices, i);
@@ -102,9 +102,9 @@ Model load_model_from_obj_into_memory(const char *file_name)
     return model;
 }
 
-Model load_model_from_obj(const char *file_name)
+Model load_model_from_obj(const char *file_path)
 {
-    Model model = load_model_from_obj_into_memory(file_name);
+    Model model = load_model_from_obj_into_memory(file_path);
     load_model_gpu(&model);
     return model;
 }

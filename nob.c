@@ -285,8 +285,8 @@ bool launch_exec(Cmd *cmd)
 bool launch_gf2(Cmd *cmd)
 {
     cmd_append(cmd, "gf2");
-    if (config.args.count) cmd_append(cmd, "--args");
     cmd_append(cmd, "-ex", "start");
+    if (config.args.count) cmd_append(cmd, "--args");
     cmd_append(cmd, temp_sprintf("./"LINUX"%s", examples[config.example_number]));
     for (size_t i = 0; i < config.args.count; i++)
         cmd_append(cmd, config.args.items[i]);

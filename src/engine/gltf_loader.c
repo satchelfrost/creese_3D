@@ -80,26 +80,120 @@ const char *cgltf_attr_type_to_str(cgltf_attribute_type attr_type)
     case cgltf_attribute_type_weights:  return "weights";
     case cgltf_attribute_type_custom:   return "custom";
     case cgltf_attribute_type_invalid:  return "invalid";
-    default:
-        assert(0 && "unreachable");
+    default:                            return "unknown attribute";
     }
 }
 
-Model load_model_from_gltf_into_memory(const char *file_name)
+#define GLTF_ATTR_PTR(accessor_ptr, out_type) \
+    (out_type *)(accessor_ptr)->buffer_view->buffer->data + \
+    (accessor_ptr)->buffer_view->offset / sizeof(out_type) + \
+    (accessor_ptr)->offset / sizeof(out_type)
+
+void populate_attributes(Mesh *mesh, cgltf_attribute attribute)
 {
+    float *positions = NULL;
+    float *normals   = NULL;
+    float *uvs       = NULL;
+    float *tangets   = NULL;
+    float *colors    = NULL;
+    float *joints    = NULL;
+    float *weights   = NULL;
+
+    switch (attribute.type) {
+    case cgltf_attribute_type_position:
+        assert(attribute.data->type == cgltf_type_vec3);
+        positions = GLTF_ATTR_PTR(attribute.data, float);
+        for (size_t i = 0; i < attribute.data->count; i++) {
+            Vector3 position = {positions[i*3+0], positions[i*3+1], positions[i*3+2]};
+            da_append(&mesh->cpu.positions, position);
+        }
+    break;
+    case cgltf_attribute_type_normal:
+        assert(attribute.data->type == cgltf_type_vec3);
+        normals = GLTF_ATTR_PTR(attribute.data, float);
+        for (size_t i = 0; i < attribute.data->count; i++) {
+            Vector3 normal = {normals[i*3+0], normals[i*3+1], normals[i*3+2]};
+            da_append(&mesh->cpu.normals, normal);
+        }
+    break;
+    case cgltf_attribute_type_tangent:
+        assert(attribute.data->type == cgltf_type_vec4);
+        tangets = GLTF_ATTR_PTR(attribute.data, float);
+        for (size_t i = 0; i < attribute.data->count; i++) {
+            Vector4 tanget = {tangets[i*4+0], tangets[i*4+1], tangets[i*4+2], tangets[i*4+3]};
+            da_append(&mesh->cpu.tangets, tanget);
+        }
+    break;
+    case cgltf_attribute_type_texcoord:
+        assert(attribute.data->type == cgltf_type_vec2);
+        uvs = GLTF_ATTR_PTR(attribute.data, float);
+        for (size_t i = 0; i < attribute.data->count; i++) {
+            Vector2 uv = {uvs[i*2+0], uvs[i*2+1]};
+            da_append(&mesh->cpu.uvs, uv);
+        }
+    break;
+    case cgltf_attribute_type_color:
+        assert(attribute.data->type == cgltf_type_vec3 || attribute.data->type == cgltf_type_vec4);
+        colors = GLTF_ATTR_PTR(attribute.data, float);
+        for (size_t i = 0; i < attribute.data->count; i++) {
+            Color c = {0};
+            uint32_t color = 0;
+            if (attribute.data->type == cgltf_type_vec3) {
+                c.r = colors[i*3+0]*255;
+                c.g = colors[i*3+1]*255;
+                c.b = colors[i*3+2]*255;
+                c.a = 255;
+                color = color_to_uint32_t(c);
+            } else if (attribute.data->type == cgltf_type_vec4) {
+                c.r = colors[i*4+0]*255;
+                c.g = colors[i*4+1]*255;
+                c.b = colors[i*4+2]*255;
+                c.a = colors[i*4+3]*255;
+                color = color_to_uint32_t(c);
+            }
+            da_append(&mesh->cpu.colors, color);
+        }
+    break;
+    case cgltf_attribute_type_joints:
+        assert(attribute.data->type == cgltf_type_vec4);
+        joints = GLTF_ATTR_PTR(attribute.data, float);
+        for (size_t i = 0; i < attribute.data->count; i++) {
+            Vector4 joint = {joints[i*4+0], joints[i*4+1], joints[i*4+2], joints[i*4+3]};
+            da_append(&mesh->cpu.joints, joint);
+        }
+    break;
+    case cgltf_attribute_type_weights:
+        assert(attribute.data->type == cgltf_type_vec4);
+        weights = GLTF_ATTR_PTR(attribute.data, float);
+        for (size_t i = 0; i < attribute.data->count; i++) {
+            Vector4 weight = {weights[i*4+0], weights[i*4+1], weights[i*4+2], weights[i*4+3]};
+            da_append(&mesh->cpu.weights, weight);
+        }
+    break;
+    case cgltf_attribute_type_custom:
+    case cgltf_attribute_type_invalid:
+    default:
+        printf("attribute %s unsupported\n", cgltf_attr_type_to_str(attribute.type));
+        assert(0);
+    }
+}
+
+Model load_model_from_gltf_into_memory(const char *file_path)
+{
+
     Model model = {0};
     String_Builder sb = {0};
-    if (!read_entire_file(file_name, &sb)) return model;
+    if (!read_entire_file(file_path, &sb)) return model;
 
     cgltf_data *data = NULL;
     cgltf_options options = {0};
     cgltf_result res = cgltf_parse(&options, sb.items, sb.count, &data);
     if (res != cgltf_result_success) {
-        printf("gltf error %s, for file %s\n", cgltf_res_to_str(res), file_name);
+        printf("gltf error %s, for file %s\n", cgltf_res_to_str(res), file_path);
         return model;
     }
 
-    res = cgltf_load_buffers(&options, data, file_name);
+    res = cgltf_load_buffers(&options, data, file_path);
     if (res != cgltf_result_success) {
         printf("gltf error %s, while loading buffers\n", cgltf_res_to_str(res));
         return model;
@@ -108,106 +202,99 @@ Model load_model_from_gltf_into_memory(const char *file_name)
     /* we need to populate the image type (SRGB for base color, UNORM for other).
      * loading the image doesn't give us the type, but instead the primitive gives us this info,
      * so we reserve some memory ahead of time */
- //    da_reserve(&model->images, model->gltf_data->images_count);
- // 
- //    for (size_t m = 0; m < model->gltf_data->meshes_count; m++) {
- // 
- //        glTF_Mesh mesh = {0};
- // 
- //        for (size_t p = 0; p < model->gltf_data->meshes[m].primitives_count; p++) {
- //            cgltf_primitive primitive = model->gltf_data->meshes[m].primitives[p];
- //            assert(primitive.type == cgltf_primitive_type_triangles);
- // 
- //            /* interleave the attributes for this primitive */
- //            glTF_Primitive prim = {0};
- //            for (size_t a = 0; a < primitive.attributes_count; a++)
- //                populate_gltf_vertices(&prim, primitive.attributes[a]);
- // 
- //            /* grab material indices */
- //            cgltf_texture *texture = NULL;
- //            texture = primitive.material->pbr_metallic_roughness.base_color_texture.texture;
- //            if (texture) {
- //                prim.material.base_image_index = cgltf_image_index(model->gltf_data, texture->image);
- //                prim.material.flags |= MATERIAL_BASE;
- //                // memcpy(prim.material.base_color_factor, primitive.material->pbr_metallic_roughness.base_color_factor, 4*sizeof(float));
- //                prim.material.base_color_factor[0] = primitive.material->pbr_metallic_roughness.base_color_factor[0];
- //                prim.material.base_color_factor[1] = primitive.material->pbr_metallic_roughness.base_color_factor[1];
- //                prim.material.base_color_factor[2] = primitive.material->pbr_metallic_roughness.base_color_factor[2];
- //                prim.material.base_color_factor[3] = primitive.material->pbr_metallic_roughness.base_color_factor[3];
- //            }
- //            texture = primitive.material->normal_texture.texture;
- //            if (texture) {
- //                prim.material.normal_image_index = cgltf_image_index(model->gltf_data, texture->image);
- //                prim.material.flags |= MATERIAL_NORMAL;
- //            }
- //            texture = primitive.material->pbr_metallic_roughness.metallic_roughness_texture.texture;
- //            if (texture) {
- //                prim.material.metallic_roughness_image_index = cgltf_image_index(model->gltf_data, texture->image);
- //                prim.material.flags |= MATERIAL_METALLIC_ROUGHNESS;
- //            }
- // 
- //            /* store the image type */
- //            if (prim.material.flags & MATERIAL_BASE)
- //                model->images.items[prim.material.base_image_index].type = IMAGE_TYPE_SRGB;
- //            if (prim.material.flags & MATERIAL_NORMAL)
- //                model->images.items[prim.material.normal_image_index].type = IMAGE_TYPE_UNORM;
- //            if (prim.material.flags & MATERIAL_METALLIC_ROUGHNESS)
- //                model->images.items[prim.material.metallic_roughness_image_index].type = IMAGE_TYPE_UNORM;
- // 
- //            /* grab indices */
- //            assert(primitive.indices->component_type == cgltf_component_type_r_16u);
- // 
- //            // uint16_t *indices = (uint16_t *)cgltf_buffer_view_data(primitive.indices->buffer_view) + primitive.indices->offset/2;
- //            uint16_t *indices = GLTF_ATTR_PTR(primitive.indices, uint16_t);
- //            for (size_t i = 0; i < primitive.indices->count; i++)
- //                da_append(&prim.indices, indices[i]);
- // 
- //            da_append(&mesh.primitives, prim);
- //        }
- //        da_append(&model->meshes, mesh);
- //    }
- // 
- //    /* load images */
- //    if (print_progress) printf("loading images...\n");
- //    for (size_t i = 0; i < model->gltf_data->images_count; i++) {
- //        const char *image_path = temp_sprintf("assets/sponza/%s", model->gltf_data->images[i].uri); // TODO: easy fix, but bug
- // 
- //        if (print_progress) {
- //            float percentage = i / (float)model->gltf_data->images_count;
- //            size_t loaded = percentage*PROGRESS_BAR;
- //            printf("\r[");
- //            for (size_t j = 0; j < PROGRESS_BAR; j++) {
- //                printf("%s", (j <= loaded) ? "=" : ".");
- //            }
- //            printf("] %.f%%", (i == model->gltf_data->images_count - 1) ?  100 : percentage*100);
- //            fflush(stdout);
- //        }
- // 
- //        Cvr_Image image = load_image(image_path);
- //        image.type = model->images.items[i].type;
- //        da_append(&model->images, image);
- //    }
- //    if (print_progress) printf("\n");
- //
- //    sb_free(sb);
+    da_reserve(&model.images, data->images_count);
+
+    for (size_t m = 0; m < data->meshes_count; m++) {
+        for (size_t p = 0; p < data->meshes[m].primitives_count; p++) {
+            Mesh mesh = {0};
+            cgltf_primitive primitive = data->meshes[m].primitives[p];
+            assert(primitive.type == cgltf_primitive_type_triangles);
+            for (size_t a = 0; a < primitive.attributes_count; a++) {
+                cgltf_attribute attribute = primitive.attributes[a];
+                populate_attributes(&mesh, attribute);
+            }
+
+            /* base color */
+            Color color = {
+                .r = primitive.material->pbr_metallic_roughness.base_color_factor[0]*255,
+                .g = primitive.material->pbr_metallic_roughness.base_color_factor[1]*255,
+                .b = primitive.material->pbr_metallic_roughness.base_color_factor[2]*255,
+                .a = primitive.material->pbr_metallic_roughness.base_color_factor[3]*255,
+            };
+            mesh.material.base_color = color_to_uint32_t(color);
+
+            /* various texture indices */
+            cgltf_texture *texture = NULL;
+
+            /* albedo texture */
+            texture = primitive.material->pbr_metallic_roughness.base_color_texture.texture;
+            if (texture) {
+                size_t index = cgltf_image_index(data, texture->image);
+                mesh.material.albedo_image_index = index;
+                model.images.items[index].type = IMAGE_TYPE_SRGB;
+                mesh.material.mask |= 1<<MATERIAL_ALBEDO;
+            }
+
+            /* normal texture */
+            texture = primitive.material->normal_texture.texture;
+            if (texture) {
+                size_t index = cgltf_image_index(data, texture->image);
+                mesh.material.normal_image_index = index;
+                model.images.items[index].type = IMAGE_TYPE_UNORM;
+                mesh.material.mask |= 1<<MATERIAL_NORMAL;
+            }
+
+            texture = primitive.material->pbr_metallic_roughness.metallic_roughness_texture.texture;
+            if (texture) {
+                size_t index = cgltf_image_index(data, texture->image);
+                mesh.material.metallic_roughness_image_index = index;
+                model.images.items[index].type = IMAGE_TYPE_UNORM;
+                mesh.material.mask |= 1<<MATERIAL_METALLIC_ROUGHNESS;
+            }
+
+            if (mesh.material.mask == 0) mesh.material.mask = 1<<MATERIAL_NO_TEXTURES;
+
+            /* grab indices */
+            if (primitive.indices->component_type == cgltf_component_type_r_16u) {
+                uint16_t *indices = GLTF_ATTR_PTR(primitive.indices, uint16_t);
+                for (size_t i = 0; i < primitive.indices->count; i++)
+                    da_append(&mesh.cpu.indices, indices[i]);
+            } else if (primitive.indices->component_type == cgltf_component_type_r_32u) {
+                uint32_t *indices = GLTF_ATTR_PTR(primitive.indices, uint32_t);
+                for (size_t i = 0; i < primitive.indices->count; i++)
+                    da_append(&mesh.cpu.indices, indices[i]);
+            } else {
+                printf("index component type %d unsupported\n", primitive.indices->component_type);
+                assert(0);
+            }
+
+            da_append(&model.meshes, mesh);
+        }
+    }
+
+    /* get the path prefix to the gltf (i.e. string up to and including the last '/') */
+    String_View sv = sv_from_cstr(file_path);
+    size_t char_path_count = 0;
+    do {
+        String_View lhs = sv_chop_by_delim(&sv, '/');
+        if (sv.count) {
+            char_path_count += lhs.count;
+            char_path_count += 1; // include count for '/' charcter
+        }
+    } while (sv.count);
+    String_View path_prefix = sv_from_parts(file_path, char_path_count);
+
+    /* load images */
+    size_t checkpoint = temp_save();
+    for (size_t i = 0; i < data->images_count; i++) {
+        const char *image_path = temp_sprintf(SV_Fmt"%s", SV_Arg(path_prefix), data->images[i].uri);
+        Creese_Image image = load_image(image_path);
+        image.type = model.images.items[i].type;
+        da_append(&model.images, image);
+    }
+    temp_rewind(checkpoint);
+
+    sb_free(sb);
 
     return model;
 }
-
-// void destroy_gltf_model(glTF_Model model)
-// {
-//     for (size_t i = 0; i < model.meshes.count; i++) {
-//         glTF_Mesh mesh = model.meshes.items[i];
-//         for (size_t j = 0; j < mesh.primitives.count; j++) {
-//             glTF_Primitive p = mesh.primitives.items[j];
-//             da_free(p.vertices);
-//             da_free(p.indices);
-//             rvk_destroy_buffer(p.vtx_buff);
-//             rvk_destroy_buffer(p.idx_buff);
-//         }
-//     }
-//
-//     for (size_t i = 0; i < model.textures.count; i++)
-//         rvk_destroy_texture(model.textures.items[i]);
-// }
-

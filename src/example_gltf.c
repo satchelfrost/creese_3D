@@ -1,9 +1,11 @@
 #include "creese_3D.h"
 
+#define GLTF_FILE "assets/psx/scene.gltf"
+// #define GLTF_FILE "assets/robot.glb"
+
 int main()
 {
-    // Model model = load_model_from_gltf_into_memory("assets/psx/scene.gltf");
-    Model model = load_model_from_gltf_into_memory("assets/robot.glb");
+    Model model = load_model_from_gltf_into_memory(GLTF_FILE);
 
     init_window(500, 500, "loading gltf");
 

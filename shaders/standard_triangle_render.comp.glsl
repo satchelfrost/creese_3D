@@ -42,6 +42,10 @@ layout(std430, binding = 7) buffer frame_data {
    uint64_t frame_buff[ ];
 };
 
+layout (binding =  8) uniform sampler2D sampler_color;
+layout (binding =  9) uniform sampler2D sampler_normal;
+layout (binding = 10) uniform sampler2D sampler_metallic_roughness;
+
 layout(local_size_x = 1024, local_size_y = 1, local_size_z = 1) in;
 
 layout(push_constant) uniform constants {

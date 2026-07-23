@@ -328,38 +328,54 @@ typedef struct {
 
 typedef enum {
     ATTRIBUTE_NORMAL,
-    ATTRIBUTE_TEX_COORD,
+    ATTRIBUTE_UV,
     ATTRIBUTE_TANGET,
     ATTRIBUTE_COLOR,
     ATTRIBUTE_COUNT,
-} Attribute;
+} Attribute_Mask;
+
+typedef enum {
+    MATERIAL_NO_TEXTURES,
+    MATERIAL_ALBEDO,
+    MATERIAL_METALLIC_ROUGHNESS,
+    MATERIAL_NORMAL,
+    MATERIAL_MASK_COUNT,
+} Material_Mask;
 
 typedef struct {
-    uint32_t attribute_mask;
+    Attribute_Mask attribute_mask;
     bool ccw;
-    uint base_color;
     size_t tri_count;
-    size_t albedo_image_index;
-    size_t metallic_roughness_image_index;
-    size_t normal_image_index;
 
     struct {
-        struct {  Vector3 *items; size_t count; size_t capacity; } positions; // required
-        struct { uint32_t *items; size_t count; size_t capacity; } indices;   // required
+        struct {  Vector3 *items; size_t count; size_t capacity; } positions;
+        struct { uint32_t *items; size_t count; size_t capacity; } indices;
         struct {  Vector3 *items; size_t count; size_t capacity; } normals;
-        struct {  Vector2 *items; size_t count; size_t capacity; } tex_coords; // TODO: rename to uvs
-        struct {  Vector2 *items; size_t count; size_t capacity; } tangets;
+        struct {  Vector2 *items; size_t count; size_t capacity; } uvs;
+        struct {  Vector4 *items; size_t count; size_t capacity; } tangets;
         struct { uint32_t *items; size_t count; size_t capacity; } colors;
+        struct {  Vector4 *items; size_t count; size_t capacity; } joints;
+        struct {  Vector4 *items; size_t count; size_t capacity; } weights;
         size_t phony_attribute;
     } cpu;
+
+    struct {
+        Material_Mask mask;
+        uint32_t base_color; // should this be just color?
+        size_t albedo_image_index;
+        size_t metallic_roughness_image_index;
+        size_t normal_image_index;
+    } material;
 
     struct {
         Rvk_Buffer vertex;
         Rvk_Buffer index;
         Rvk_Buffer normal;
-        Rvk_Buffer tex_coord;
+        Rvk_Buffer uv;
         Rvk_Buffer tanget;
         Rvk_Buffer color;
+        Rvk_Buffer joint;  // TODO
+        Rvk_Buffer weight; // TODO
         VkDescriptorSet ds;
     } gpu;
 } Mesh;
@@ -382,11 +398,13 @@ typedef struct {
 } Model;
 
 /* obj */
-Model load_model_from_obj(const char *file_name);
-Model load_model_from_obj_into_memory(const char *file_name);
+Model load_model_from_obj(const char *file_path);
+Model load_model_from_obj_into_memory(const char *file_path);
 
 /* gltf */
-Model load_model_from_gltf_into_memory(const char *file_name);
+Model load_model_from_gltf_into_memory(const char *file_path);
+
+Creese_Image load_image(const char *file_path);
 
 void draw_model(Model model);
 void destroy_model(Model model);
