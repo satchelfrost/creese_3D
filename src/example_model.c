@@ -157,43 +157,51 @@ int main()
     Model models[MODEL_COUNT] = {0};
 
     /* cube */
+    Mesh mesh = {0};
     for (size_t i = 0; i < ARRAY_LEN(cube_verts); i++) {
-        da_append(&models[MODEL_CUBE].cpu.positions, cube_verts[i].position);
-        da_append(&models[MODEL_CUBE].cpu.colors, color_to_uint32_t(cube_verts[i].color));
-        da_append(&models[MODEL_CUBE].cpu.normals, cube_verts[i].normal);
-        da_append(&models[MODEL_CUBE].cpu.indices, i);
+        da_append(&mesh.cpu.positions, cube_verts[i].position);
+        da_append(&mesh.cpu.colors, color_to_uint32_t(cube_verts[i].color));
+        da_append(&mesh.cpu.normals, cube_verts[i].normal);
+        da_append(&mesh.cpu.indices, i);
     }
-    models[MODEL_CUBE].tri_count = models[MODEL_CUBE].cpu.indices.count/3;
+    mesh.tri_count = mesh.cpu.indices.count/3;
+    da_append(&models[MODEL_CUBE].meshes, mesh);
 
     /* tetrahedron */
+    mesh = (Mesh){0};
     for (size_t i = 0; i < ARRAY_LEN(tetrahedron_verts); i++) {
-        da_append(&models[MODEL_TETRAHEDRON].cpu.positions, tetrahedron_verts[i].position);
-        da_append(&models[MODEL_TETRAHEDRON].cpu.colors, color_to_uint32_t(tetrahedron_verts[i].color));
+        da_append(&mesh.cpu.positions, tetrahedron_verts[i].position);
+        da_append(&mesh.cpu.colors, color_to_uint32_t(tetrahedron_verts[i].color));
     }
     for (size_t i = 0; i < ARRAY_LEN(tetrahedron_indices); i++)
-        da_append(&models[MODEL_TETRAHEDRON].cpu.indices, tetrahedron_indices[i]);
-    models[MODEL_TETRAHEDRON].tri_count = 4;
+        da_append(&mesh.cpu.indices, tetrahedron_indices[i]);
+    mesh.tri_count = 4;
+    da_append(&models[MODEL_TETRAHEDRON].meshes, mesh);
 
     /* quad */
+    mesh = (Mesh){0};
     for (size_t i = 0; i < ARRAY_LEN(quad_verts); i++) {
-        da_append(&models[MODEL_QUAD].cpu.positions, quad_verts[i].position);
-        da_append(&models[MODEL_QUAD].cpu.colors, color_to_uint32_t(quad_verts[i].color));
+        da_append(&mesh.cpu.positions, quad_verts[i].position);
+        da_append(&mesh.cpu.colors, color_to_uint32_t(quad_verts[i].color));
     }
     for (size_t i = 0; i < ARRAY_LEN(quad_indices); i++)
-        da_append(&models[MODEL_QUAD].cpu.indices, quad_indices[i]);
-    models[MODEL_QUAD].tri_count = 2;
+        da_append(&mesh.cpu.indices, quad_indices[i]);
+    mesh.tri_count = 2;
+    da_append(&models[MODEL_QUAD].meshes, mesh);
 
     /* triangle */
+    mesh = (Mesh){0};
     for (size_t i = 0; i < ARRAY_LEN(triangle_verts); i++) {
-        da_append(&models[MODEL_TRIANGLE].cpu.positions, triangle_verts[i].position);
-        da_append(&models[MODEL_TRIANGLE].cpu.colors, color_to_uint32_t(triangle_verts[i].color));
-        da_append(&models[MODEL_TRIANGLE].cpu.indices, i);
+        da_append(&mesh.cpu.positions, triangle_verts[i].position);
+        da_append(&mesh.cpu.colors, color_to_uint32_t(triangle_verts[i].color));
+        da_append(&mesh.cpu.indices, i);
     }
-    models[MODEL_TRIANGLE].tri_count = 1;
+    mesh.tri_count = 1;
+    da_append(&models[MODEL_TRIANGLE].meshes, mesh);
 
     /* note we're not using `load_model_from_obj` because we want to manually call load_model_gpu */
-    models[MODEL_BUNNY] = load_model_from_obj_to_host_mem("assets/bunny.obj");
-    models[MODEL_BUNNY].base_color = color_to_uint32_t(RED);
+    models[MODEL_BUNNY] = load_model_from_obj_into_memory("assets/bunny.obj");
+    models[MODEL_BUNNY].meshes.items[0].material.color = color_to_uint32_t(RED);
 
     /* load models to the gpu */
     for (size_t i = 0; i < MODEL_COUNT; i++) load_model_gpu(&models[i]);

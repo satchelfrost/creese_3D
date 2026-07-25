@@ -6,13 +6,13 @@ typedef struct {
     String_Builder mtl;
 } Obj_File_Data;
 
-void obj_file_reader(void *ctx, const char *file_name, int is_mtl, const char *obj_file_name, char **items, size_t *count)
+void obj_file_reader(void *ctx, const char *file_path, int is_mtl, const char *obj_file_path, char **items, size_t *count)
 {
-    UNUSED(obj_file_name);
+    UNUSED(obj_file_path);
 
     Obj_File_Data *file_data = (Obj_File_Data *)ctx;
     String_Builder *sb = (is_mtl) ? &file_data->mtl : &file_data->obj;
-    if (!read_entire_file(file_name, sb)) {
+    if (!read_entire_file(file_path, sb)) {
         *count = 0;
         return;
     }
@@ -21,9 +21,10 @@ void obj_file_reader(void *ctx, const char *file_name, int is_mtl, const char *o
     *count = sb->count;
 }
 
-Model load_model_from_obj_to_host_mem(const char *file_name)
+Model load_model_from_obj_into_memory(const char *file_path)
 {
     Model model = {0};
+    Mesh mesh = {0};
     unsigned int flags = TINYOBJ_FLAG_TRIANGULATE;
     tinyobj_attrib_t attr = {0};
     tinyobj_shape_t *shapes = NULL;
@@ -33,9 +34,9 @@ Model load_model_from_obj_to_host_mem(const char *file_name)
     Obj_File_Data file_data = {0};
 
     int res = tinyobj_parse_obj(&attr, &shapes, &num_shapes, &materials,
-                                &num_materials, file_name, obj_file_reader, &file_data, flags);
+                                &num_materials, file_path, obj_file_reader, &file_data, flags);
     if (res != TINYOBJ_SUCCESS) {
-        fprintf(stderr, "failed to parse obj file %s, error: %d\n", file_name, res);
+        fprintf(stderr, "failed to parse obj file %s, error: %d\n", file_path, res);
         return model;
     }
 
@@ -44,33 +45,30 @@ Model load_model_from_obj_to_host_mem(const char *file_name)
         return model;
     }
 
-    if (attr.num_normals)   model.attribute_mask |= (1<<ATTRIBUTE_NORMAL);
-    if (attr.num_texcoords) model.attribute_mask |= (1<<ATTRIBUTE_TEX_COORD);
-
     for (size_t i = 0; i < attr.num_faces; i++) {
         int v_idx  = attr.faces[i].v_idx;
         int vt_idx = attr.faces[i].vt_idx;
         int vn_idx = attr.faces[i].vn_idx;
         if (attr.num_vertices) {
             Vector3 v = {attr.vertices[v_idx*3 + 0], attr.vertices[v_idx*3 + 1], attr.vertices[v_idx*3 + 2]};
-            da_append(&model.cpu.positions, v);
+            da_append(&mesh.cpu.positions, v);
         }
         if (attr.num_normals) {
             Vector3 n = {attr.normals[vn_idx*3 + 0], attr.normals[vn_idx*3 + 1], attr.normals[vn_idx*3 + 2]};
-            da_append(&model.cpu.normals, n);
+            da_append(&mesh.cpu.normals, n);
         }
         if (attr.num_texcoords) {
             Vector2 t = {attr.texcoords[vt_idx*2 + 0], attr.texcoords[vt_idx*2 + 1]};
-            da_append(&model.cpu.tex_coords, t);
+            da_append(&mesh.cpu.uvs, t);
         }
 
-        da_append(&model.cpu.indices, i);
+        da_append(&mesh.cpu.indices, i);
     }
 
-    model.tri_count = model.cpu.indices.count/3;
+    mesh.tri_count = mesh.cpu.indices.count/3;
 
     // is this a good default?
-    model.ccw = true;
+    mesh.ccw = true;
 
     for (size_t i = 0; num_materials && i < attr.num_face_num_verts; i++) {
         int mat_id = attr.material_ids[i];
@@ -84,9 +82,9 @@ Model load_model_from_obj_to_host_mem(const char *file_name)
         uint32_t b = color.z*255.0f;
         uint32_t a = 255;
         uint32_t final_color = a<<24 | b<<16 | g<<8 | r;
-        da_append(&model.cpu.colors, final_color);
-        da_append(&model.cpu.colors, final_color);
-        da_append(&model.cpu.colors, final_color);
+        da_append(&mesh.cpu.colors, final_color);
+        da_append(&mesh.cpu.colors, final_color);
+        da_append(&mesh.cpu.colors, final_color);
     }
 
     tinyobj_attrib_free(&attr);
@@ -95,12 +93,15 @@ Model load_model_from_obj_to_host_mem(const char *file_name)
     sb_free(file_data.mtl);
     sb_free(file_data.obj);
 
+    // obj is limited to one fused mesh for now
+    da_append(&model.meshes, mesh);
+
     return model;
 }
 
-Model load_model_from_obj(const char *file_name)
+Model load_model_from_obj(const char *file_path)
 {
-    Model model = load_model_from_obj_to_host_mem(file_name);
+    Model model = load_model_from_obj_into_memory(file_path);
     load_model_gpu(&model);
     return model;
 }

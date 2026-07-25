@@ -20,8 +20,12 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "../external/stb_truetype.h"
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 // engine modules
 #include "obj_loader.c"
+#include "gltf_loader.c"
 
 #ifndef Z_NEAR
     #define Z_NEAR 0.1
@@ -94,7 +98,7 @@ enum {
 static struct {
     struct { Rvk_Pipeline pl; VkDescriptorSet ds; } display;
     struct { Rvk_Pipeline pl; VkDescriptorSet ds; } clear_background;
-    struct { Rvk_Pipeline pl;                     } render; // TODO: maybe rename to point render
+    struct { Rvk_Pipeline pl;                     } render; // TODO: rename to point render
     struct { Rvk_Pipeline pl;                     } triangle_render;
     struct { Rvk_Pipeline pl; VkDescriptorSet ds; } hidden_surface;
     struct { Rvk_Pipeline pl; VkDescriptorSet ds[FRAME_BUFFER_COUNT]; } hole_filling;
@@ -989,7 +993,7 @@ uint32_t color_to_uint32_t(Color color)
     uint32_t g = color.g;
     uint32_t b = color.b;
     uint32_t a = color.a;
-    return a << 24 | b << 16 | g << 8 | r;
+    return a<<24 | b<<16 | g<<8 | r;
 }
 
 Color color_from_hsv(float hue, float saturation, float value)
@@ -1338,6 +1342,36 @@ void setup_standard_ds_layouts()
             .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
             .stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT,
         },
+        {
+            .binding         = 8,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+        {
+            .binding         = 9,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+        {
+            .binding         = 10,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+        {
+            .binding         = 11,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+        {
+            .binding         = 12,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
     };
     vk_create_descriptor_set_layout(ctx.device.logical, NULL, &standard.ds_layouts[DS_LAYOUT_TRIANGLE_RENDER],
                                     .pBindings = triangle_render_bindings,
@@ -1370,8 +1404,9 @@ struct {
     float16 model;
     uint32_t attribute_mask;
     uint32_t tri_count;
-    uint32_t base_color;
+    uint32_t color;
     uint32_t ccw;
+    uint32_t material_mask;
 } tri_render_push_const;
 
 void create_standard_compute_pipelines()
@@ -1720,17 +1755,44 @@ void draw_model(Model model)
     VkCommandBuffer cb = ctx.device.cmd_buffs[0];
 
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, standard.triangle_render.pl.handle);
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, standard.triangle_render.pl.layout, 0, 1, &model.gpu.ds, 0, NULL);
+
+    for (size_t i = 0; i < model.meshes.count; i++) {
+        Mesh mesh = model.meshes.items[i];
+
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, standard.triangle_render.pl.layout, 0, 1, &mesh.gpu.ds, 0, NULL);
+
+        tri_render_push_const.model          = MatrixToFloatV(get_model());
+        tri_render_push_const.attribute_mask = mesh.gpu.mask;
+        tri_render_push_const.material_mask  = mesh.material.mask;
+        tri_render_push_const.tri_count      = mesh.tri_count;
+        tri_render_push_const.color          = (mesh.material.color) ? mesh.material.color : color_to_uint32_t(WHITE);
+        tri_render_push_const.ccw            = mesh.ccw;
+
+        group_x = ceilf(tri_render_push_const.tri_count/POINT_WORKGROUP_SIZE);
+        vkCmdPushConstants(cb, standard.triangle_render.pl.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                sizeof(tri_render_push_const), &tri_render_push_const);
+        vkCmdDispatch(cb, group_x, group_y, group_z);
+    }
+}
+
+void draw_mesh(Mesh mesh)
+{
+    int group_x = 1, group_y = 1, group_z = 1;
+    VkCommandBuffer cb = ctx.device.cmd_buffs[0];
+
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, standard.triangle_render.pl.handle);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, standard.triangle_render.pl.layout, 0, 1, &mesh.gpu.ds, 0, NULL);
 
     tri_render_push_const.model          = MatrixToFloatV(get_model());
-    tri_render_push_const.attribute_mask = model.attribute_mask;
-    tri_render_push_const.tri_count      = model.tri_count;
-    tri_render_push_const.base_color     = (model.base_color) ? model.base_color : color_to_uint32_t(WHITE);
-    tri_render_push_const.ccw            = model.ccw;
+    tri_render_push_const.attribute_mask = mesh.gpu.mask;
+    tri_render_push_const.material_mask  = mesh.material.mask;
+    tri_render_push_const.tri_count      = mesh.tri_count;
+    tri_render_push_const.color          = (mesh.material.color) ? mesh.material.color : color_to_uint32_t(WHITE);
+    tri_render_push_const.ccw            = mesh.ccw;
 
     group_x = ceilf(tri_render_push_const.tri_count/POINT_WORKGROUP_SIZE);
     vkCmdPushConstants(cb, standard.triangle_render.pl.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
-                       sizeof(tri_render_push_const), &tri_render_push_const);
+            sizeof(tri_render_push_const), &tri_render_push_const);
     vkCmdDispatch(cb, group_x, group_y, group_z);
 }
 
@@ -1873,87 +1935,148 @@ void alloc_point_render_ds(VkDescriptorSet *ds)
 
 void update_triangle_model_ds(Model model)
 {
-    // TODO: these buffers should always be created
-    if (!standard.uniform.buffer.info.buffer)
-        standard.uniform.buffer = r_create_mapped_uniform_buffer(ctx.device, sizeof(standard.uniform.data));
-    if (!standard.frame_buffers[0].info.buffer)
-        standard.frame_buffers[0] = create_software_frame_buffer(window.width, window.height);
+    assert(standard.uniform.buffer.info.buffer);
+    assert(standard.frame_buffers[0].info.buffer);
+    assert(model.phony.texture.info.sampler);
+    assert(model.phony.buffer.info.buffer);
 
-    assert(model.gpu.index.info.buffer);
-    assert(model.gpu.vertex.info.buffer);
-    assert(model.gpu.normal.info.buffer);
-    assert(model.gpu.tex_coord.info.buffer);
-    assert(model.gpu.tanget.info.buffer);
-    assert(model.gpu.color.info.buffer);
+    for (size_t i = 0; i < model.meshes.count; i++) {
+        Mesh mesh = model.meshes.items[i];
+        assert(mesh.gpu.index.info.buffer);
+        assert(mesh.gpu.vertex.info.buffer);
+        assert(mesh.gpu.normal.info.buffer);
+        assert(mesh.gpu.uv.info.buffer);
+        assert(mesh.gpu.tanget.info.buffer);
+        assert(mesh.gpu.color.info.buffer);
 
-    VkWriteDescriptorSet writes[] = {
-        /* standard_triangle_render.comp.glsl */
-        {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstBinding = 0,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .pBufferInfo = &standard.uniform.buffer.info,
-            .dstSet = model.gpu.ds,
-        },
-        {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstBinding = 1,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &model.gpu.vertex.info,
-            .dstSet = model.gpu.ds,
-        },
-        {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstBinding = 2,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &model.gpu.normal.info,
-            .dstSet = model.gpu.ds,
-        },
-        {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstBinding = 3,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &model.gpu.tex_coord.info,
-            .dstSet = model.gpu.ds,
-        },
-        {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstBinding = 4,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &model.gpu.color.info,
-            .dstSet = model.gpu.ds,
-        },
-        {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstBinding = 5,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &model.gpu.tanget.info,
-            .dstSet = model.gpu.ds,
-        },
-        {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstBinding = 6,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &model.gpu.index.info,
-            .dstSet = model.gpu.ds,
-        },
-        {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstBinding = 7,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &standard.frame_buffers[0].info,
-            .dstSet = model.gpu.ds,
-        },
-    };
-    vkUpdateDescriptorSets(ctx.device.logical, ARRAY_LEN(writes), writes, 0, NULL);
+        /* get the image info */
+        VkDescriptorImageInfo *albedo_image_info = NULL;
+        VkDescriptorImageInfo *normal_image_info = NULL;
+        VkDescriptorImageInfo *metallic_roughness_image_info = NULL;
+        if (mesh.material.mask & 1<<MATERIAL_ALBEDO)
+            albedo_image_info = &model.textures.items[mesh.material.albedo_image_index].info;
+        else
+            albedo_image_info = &model.phony.texture.info;
+        if (mesh.material.mask & 1<<MATERIAL_NORMAL)
+            normal_image_info = &model.textures.items[mesh.material.normal_image_index].info;
+        else
+            normal_image_info = &model.phony.texture.info;
+        if (mesh.material.mask & 1<<MATERIAL_METALLIC_ROUGHNESS)
+            metallic_roughness_image_info = &model.textures.items[mesh.material.metallic_roughness_image_index].info;
+        else
+            metallic_roughness_image_info = &model.phony.texture.info;
+
+
+        VkWriteDescriptorSet writes[] = {
+            /* standard_triangle_render.comp.glsl */
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstBinding = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .pBufferInfo = &standard.uniform.buffer.info,
+                .dstSet = mesh.gpu.ds,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstBinding = 1,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pBufferInfo = &mesh.gpu.vertex.info,
+                .dstSet = mesh.gpu.ds,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstBinding = 2,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pBufferInfo = &mesh.gpu.normal.info,
+                .dstSet = mesh.gpu.ds,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstBinding = 3,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pBufferInfo = &mesh.gpu.uv.info,
+                .dstSet = mesh.gpu.ds,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstBinding = 4,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pBufferInfo = &mesh.gpu.color.info,
+                .dstSet = mesh.gpu.ds,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstBinding = 5,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pBufferInfo = &mesh.gpu.tanget.info,
+                .dstSet = mesh.gpu.ds,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstBinding = 6,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pBufferInfo = &mesh.gpu.index.info,
+                .dstSet = mesh.gpu.ds,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstBinding = 7,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pBufferInfo = &standard.frame_buffers[0].info,
+                .dstSet = mesh.gpu.ds,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstBinding = 8,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pBufferInfo = &mesh.gpu.joint.info,
+                .dstSet = mesh.gpu.ds,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstBinding = 9,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pBufferInfo = &mesh.gpu.weight.info,
+                .dstSet = mesh.gpu.ds,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstBinding = 10,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .pImageInfo = albedo_image_info ,
+                .dstSet = mesh.gpu.ds,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstBinding = 11,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .pImageInfo = normal_image_info,
+                .dstSet = mesh.gpu.ds,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstBinding = 12,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .pImageInfo = metallic_roughness_image_info ,
+                .dstSet = mesh.gpu.ds,
+            },
+        };
+        vkUpdateDescriptorSets(ctx.device.logical, ARRAY_LEN(writes), writes, 0, NULL);
+    }
+
 }
 
 void init_standard_pipelines()
@@ -1994,7 +2117,6 @@ Rvk_Buffer create_index_buffer(size_t size, void *indices)
 {
     return r_create_index_buffer(ctx.device, size, indices);
 }
-
 
 void draw_text_at_base(Font font, const char *text, size_t text_len, int x, int y, Color color)
 {
@@ -2099,65 +2221,137 @@ void rotate_y(float angle)
 
 void destroy_model(Model model)
 {
-    da_free(model.cpu.positions);
-    da_free(model.cpu.normals);
-    da_free(model.cpu.tex_coords);
-    da_free(model.cpu.tangets);
-    da_free(model.cpu.colors);
-    da_free(model.cpu.indices);
+    for (size_t i = 0; i < model.meshes.count; i++) {
+        Mesh mesh = model.meshes.items[i];
+        da_free(mesh.cpu.positions);
+        da_free(mesh.cpu.normals);
+        da_free(mesh.cpu.uvs);
+        da_free(mesh.cpu.tangets);
+        da_free(mesh.cpu.colors);
+        da_free(mesh.cpu.indices);
 
-    destroy_buffer(model.gpu.vertex);
-    destroy_buffer(model.gpu.index);
-    destroy_buffer(model.gpu.normal);
-    destroy_buffer(model.gpu.tex_coord);
-    destroy_buffer(model.gpu.tanget);
-    destroy_buffer(model.gpu.color);
+        destroy_buffer(mesh.gpu.vertex);
+        destroy_buffer(mesh.gpu.index);
+
+        /* we check before destroying here because a phony buffer might be used and we don't want to
+         * destroy that twice */
+        if (mesh.gpu.mask & 1<<ATTRIBUTE_NORMAL) destroy_buffer(mesh.gpu.normal);
+        if (mesh.gpu.mask & 1<<ATTRIBUTE_UV)     destroy_buffer(mesh.gpu.uv);
+        if (mesh.gpu.mask & 1<<ATTRIBUTE_TANGET) destroy_buffer(mesh.gpu.tanget);
+        if (mesh.gpu.mask & 1<<ATTRIBUTE_COLOR)  destroy_buffer(mesh.gpu.color);
+        if (mesh.gpu.mask & 1<<ATTRIBUTE_JOINT_WEIGHT) {
+            destroy_buffer(mesh.gpu.joint);
+            destroy_buffer(mesh.gpu.weight);
+        }
+    }
+
+    for (size_t i = 0; i < model.textures.count; i++) {
+        free(model.images.items[i].data);
+        destroy_texture(model.textures.items[i]);
+    }
+
+    destroy_texture(model.phony.texture);
+    destroy_buffer(model.phony.buffer);
 }
 
 void load_model_gpu(Model *model)
 {
-    /* vertex and index buffers are required, everything else is optional */
-    size_t size = model->cpu.positions.count*sizeof(*model->cpu.positions.items);
-    assert(size);
-    model->gpu.vertex = create_compute_buffer(size, model->cpu.positions.items);
-    size = model->cpu.indices.count*sizeof(*model->cpu.indices.items);
-    assert(size);
-    model->gpu.index = create_compute_buffer(size, model->cpu.indices.items);
+    /* create phony attribute buffer and phony texture */
+    model->phony.buffer  = create_compute_buffer(sizeof(model->phony.data), &model->phony.data);
+    model->phony.image   = (Creese_Image){.width = 1, .height = 1, .data = &model->phony.data, };
+    model->phony.texture = create_texture(model->phony.image);
 
-    size = model->cpu.normals.count*sizeof(*model->cpu.normals.items);
-    if (size) {
-        assert(model->gpu.normal.info.buffer == NULL);
-        model->gpu.normal = create_compute_buffer(size, model->cpu.normals.items);
-        model->attribute_mask |= (1<<ATTRIBUTE_NORMAL);
-    } else model->gpu.normal = create_compute_buffer(sizeof(model->nil_buffer), &model->nil_buffer);
+    /* create textures */
+    for (size_t i = 0; i < model->images.count; i++) {
+        Rvk_Texture texture = create_texture(model->images.items[i]);
+        da_append(&model->textures, texture);
+    }
 
-    size = model->cpu.tex_coords.count*sizeof(*model->cpu.tex_coords.items);
-    if (size) {
-        assert(model->gpu.tex_coord.info.buffer == NULL);
-        model->gpu.tex_coord = create_compute_buffer(size, model->cpu.tex_coords.items);
-        model->attribute_mask |= (1<<ATTRIBUTE_TEX_COORD);
-    } else model->gpu.tex_coord = create_compute_buffer(sizeof(model->nil_buffer), &model->nil_buffer);
+    /* create compute buffers for the attributes, and also textures */
+    for (size_t i = 0; i < model->meshes.count; i++) {
+        Mesh *mesh = &model->meshes.items[i];
 
-    size = model->cpu.colors.count*sizeof(*model->cpu.colors.items);
-    if (size) {
-        assert(model->gpu.color.info.buffer == NULL);
-        model->gpu.color = create_compute_buffer(size, model->cpu.colors.items);
-        model->attribute_mask |= (1<<ATTRIBUTE_COLOR);
-    } else model->gpu.color = create_compute_buffer(sizeof(model->nil_buffer), &model->nil_buffer);
+        /* vertex and index buffers are required, everything else is optional */
+        size_t size = mesh->cpu.positions.count*sizeof(*mesh->cpu.positions.items);
+        assert(size);
+        mesh->gpu.vertex = create_compute_buffer(size, mesh->cpu.positions.items);
+        size = mesh->cpu.indices.count*sizeof(*mesh->cpu.indices.items);
+        assert(size);
+        mesh->gpu.index = create_compute_buffer(size, mesh->cpu.indices.items);
 
-    size = model->cpu.tangets.count*sizeof(*model->cpu.tangets.items);
-    if (size) {
-        assert(model->gpu.tanget.info.buffer == NULL);
-        model->gpu.tanget = create_compute_buffer(size, model->cpu.tangets.items);
-        model->attribute_mask |= (1<<ATTRIBUTE_TANGET);
-    } else model->gpu.tanget = create_compute_buffer(sizeof(model->nil_buffer), &model->nil_buffer);
+        size = mesh->cpu.normals.count*sizeof(*mesh->cpu.normals.items);
+        if (size) {
+            assert(mesh->gpu.normal.info.buffer == NULL);
+            mesh->gpu.normal = create_compute_buffer(size, mesh->cpu.normals.items);
+            mesh->gpu.mask |= (1<<ATTRIBUTE_NORMAL);
+        } else mesh->gpu.normal = model->phony.buffer;
 
-    /* allocate descriptor set */
-    assert(standard.ds_layouts[DS_LAYOUT_TRIANGLE_RENDER]);
-    vk_allocate_descriptor_sets(ctx.device.logical, &model->gpu.ds,
-                                .descriptorPool = ctx.pool,
-                                .descriptorSetCount = 1,
-                                .pSetLayouts = &standard.ds_layouts[DS_LAYOUT_TRIANGLE_RENDER]);
+        size = mesh->cpu.uvs.count*sizeof(*mesh->cpu.uvs.items);
+        if (size) {
+            assert(mesh->gpu.uv.info.buffer == NULL);
+            mesh->gpu.uv = create_compute_buffer(size, mesh->cpu.uvs.items);
+            mesh->gpu.mask |= (1<<ATTRIBUTE_UV);
+        } else mesh->gpu.uv = model->phony.buffer;
+
+        size = mesh->cpu.colors.count*sizeof(*mesh->cpu.colors.items);
+        if (size) {
+            assert(mesh->gpu.color.info.buffer == NULL);
+            mesh->gpu.color = create_compute_buffer(size, mesh->cpu.colors.items);
+            mesh->gpu.mask |= (1<<ATTRIBUTE_COLOR);
+        } else mesh->gpu.color = model->phony.buffer;
+
+        size = mesh->cpu.tangets.count*sizeof(*mesh->cpu.tangets.items);
+        if (size) {
+            assert(mesh->gpu.tanget.info.buffer == NULL);
+            mesh->gpu.tanget = create_compute_buffer(size, mesh->cpu.tangets.items);
+            mesh->gpu.mask |= (1<<ATTRIBUTE_TANGET);
+        } else mesh->gpu.tanget = model->phony.buffer;
+
+        size = mesh->cpu.joints.count*sizeof(*mesh->cpu.joints.items);
+        if (size) {
+            assert(mesh->gpu.joint.info.buffer == NULL);
+            mesh->gpu.joint = create_compute_buffer(size, mesh->cpu.joints.items);
+            mesh->gpu.mask |= (1<<ATTRIBUTE_JOINT_WEIGHT);
+        } else mesh->gpu.joint = model->phony.buffer;
+
+        size = mesh->cpu.weights.count*sizeof(*mesh->cpu.weights.items);
+        if (size) {
+            assert(mesh->gpu.weight.info.buffer == NULL);
+            mesh->gpu.weight = create_compute_buffer(size, mesh->cpu.weights.items);
+            mesh->gpu.mask |= (1<<ATTRIBUTE_JOINT_WEIGHT);
+        } else mesh->gpu.weight = model->phony.buffer;
+
+        /* allocate descriptor set */
+        assert(standard.ds_layouts[DS_LAYOUT_TRIANGLE_RENDER]);
+        vk_allocate_descriptor_sets(ctx.device.logical, &mesh->gpu.ds,
+                                    .descriptorPool = ctx.pool,
+                                    .descriptorSetCount = 1,
+                                    .pSetLayouts = &standard.ds_layouts[DS_LAYOUT_TRIANGLE_RENDER]);
+    }
+
 
     update_triangle_model_ds(*model);
+}
+
+Creese_Image load_image(const char *file_name)
+{
+    Creese_Image img = {0};
+    int channels;
+    img.data = stbi_load(file_name, &img.width, &img.height, &channels, STBI_rgb_alpha);
+    if (!img.data) printf("ERROR: failed to load image %s\n", file_name);
+    return img;
+}
+
+Rvk_Texture create_texture(Creese_Image img)
+{
+    VkFormat format = 0;
+    VkExtent2D extent = {img.width, img.height};
+
+    switch (img.type) {
+    case IMAGE_TYPE_UNORM: format = VK_FORMAT_R8G8B8A8_UNORM; break;
+    case IMAGE_TYPE_SRGB:  format = VK_FORMAT_R8G8B8A8_SRGB;  break;
+    default:               format = VK_FORMAT_R8G8B8A8_SRGB;  break;
+    }
+
+    return r_create_texture(ctx.device, extent, img.data, format);
 }

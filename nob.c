@@ -14,6 +14,7 @@ const char *creese_3D_srcs[] = {
     SRC"creese_3D.h",
     ENGINE"creese_3D.c",
     ENGINE"obj_loader.c",
+    ENGINE"gltf_loader.c",
 };
 
 const char *shaders[] = {
@@ -32,6 +33,7 @@ const char *examples[] = {
     "example_points",
     "example_text",
     "example_model",
+    "example_gltf",
 };
 
 bool compile_shaders(Cmd *cmd)
@@ -283,8 +285,8 @@ bool launch_exec(Cmd *cmd)
 bool launch_gf2(Cmd *cmd)
 {
     cmd_append(cmd, "gf2");
-    if (config.args.count) cmd_append(cmd, "--args");
     cmd_append(cmd, "-ex", "start");
+    if (config.args.count) cmd_append(cmd, "--args");
     cmd_append(cmd, temp_sprintf("./"LINUX"%s", examples[config.example_number]));
     for (size_t i = 0; i < config.args.count; i++)
         cmd_append(cmd, config.args.items[i]);
@@ -318,7 +320,12 @@ int main(int argc, char **argv)
 
     if (config.run)       if (!launch_exec(&cmd))      return 1;
     if (config.renderdoc) if (!launch_renderdoc(&cmd)) return 1;
-    if (config.debug)     if (!launch_gf2(&cmd))       return 1;
+    if (config.debug) {
+        if (!launch_gf2(&cmd)) {
+            printf("To install gf2 clone https://github.com/nakst/gf\n");
+            return 1;
+        }
+    }
 
     return 0;
 }
