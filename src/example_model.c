@@ -201,7 +201,7 @@ int main()
 
     /* note we're not using `load_model_from_obj` because we want to manually call load_model_gpu */
     models[MODEL_BUNNY] = load_model_from_obj_into_memory("assets/bunny.obj");
-    models[MODEL_BUNNY].meshes.items[0].material.base_color = color_to_uint32_t(RED);
+    models[MODEL_BUNNY].meshes.items[0].material.color = color_to_uint32_t(RED);
 
     /* load models to the gpu */
     for (size_t i = 0; i < MODEL_COUNT; i++) load_model_gpu(&models[i]);

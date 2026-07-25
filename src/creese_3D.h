@@ -331,6 +331,7 @@ typedef enum {
     ATTRIBUTE_UV,
     ATTRIBUTE_TANGET,
     ATTRIBUTE_COLOR,
+    ATTRIBUTE_JOINT_WEIGHT,
     ATTRIBUTE_COUNT,
 } Attribute_Mask;
 
@@ -343,7 +344,6 @@ typedef enum {
 } Material_Mask;
 
 typedef struct {
-    Attribute_Mask attribute_mask;
     bool ccw;
     size_t tri_count;
 
@@ -356,26 +356,26 @@ typedef struct {
         struct { uint32_t *items; size_t count; size_t capacity; } colors;
         struct {  Vector4 *items; size_t count; size_t capacity; } joints;
         struct {  Vector4 *items; size_t count; size_t capacity; } weights;
-        size_t phony_attribute;
     } cpu;
 
     struct {
-        Material_Mask mask;
-        uint32_t base_color; // should this be just color?
+        uint32_t mask;
+        uint32_t color;
         size_t albedo_image_index;
         size_t metallic_roughness_image_index;
         size_t normal_image_index;
     } material;
 
     struct {
+        uint32_t mask;
         Rvk_Buffer vertex;
         Rvk_Buffer index;
         Rvk_Buffer normal;
         Rvk_Buffer uv;
         Rvk_Buffer tanget;
         Rvk_Buffer color;
-        Rvk_Buffer joint;  // TODO
-        Rvk_Buffer weight; // TODO
+        Rvk_Buffer joint;
+        Rvk_Buffer weight;
         VkDescriptorSet ds;
     } gpu;
 } Mesh;
@@ -395,6 +395,7 @@ typedef struct {
     struct {         Mesh *items; size_t count; size_t capacity; } meshes;
     struct {  Rvk_Texture *items; size_t count; size_t capacity; } textures;
     struct { Creese_Image *items; size_t count; size_t capacity; } images;
+    struct { Rvk_Texture texture; Rvk_Buffer buffer; Creese_Image image; uint32_t data; } phony;
 } Model;
 
 /* obj */
@@ -405,8 +406,10 @@ Model load_model_from_obj_into_memory(const char *file_path);
 Model load_model_from_gltf_into_memory(const char *file_path);
 
 Creese_Image load_image(const char *file_path);
+Rvk_Texture create_texture(Creese_Image img);
 
 void draw_model(Model model);
+void draw_mesh(Mesh mesh);
 void destroy_model(Model model);
 void load_model_gpu(Model *model);
 Rvk_Buffer create_vertex_buffer(size_t size, void *vertices);

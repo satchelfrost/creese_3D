@@ -1,55 +1,6 @@
 #define CGLTF_IMPLEMENTATION
 #include "../external/cgltf.h"
 
-//typedef struct {
-//    Rvk_Buffer vtx_buff;
-//    Rvk_Buffer idx_buff;
-//    glTF_Material material;
-//    glTF_Indices indices;
-//    glTF_Vertices vertices;
-//    Attribute_Flags flags;
-//} glTF_Primitive;
-//
-//typedef struct {
-//    glTF_Primitive *items;
-//    size_t count;
-//    size_t capacity;
-//} glTF_Primitives;
-//
-//typedef struct {
-//    glTF_Primitives primitives;
-//} glTF_Mesh;
-//
-//typedef struct {
-//    glTF_Mesh *items;
-//    size_t count;
-//    size_t capacity;
-//} glTF_Meshes;
-//
-//typedef struct {
-//    Rvk_Texture *items;
-//    size_t count;
-//    size_t capacity;
-//} glTF_Textures;
-//
-//typedef struct {
-//    Cvr_Image *items;
-//    size_t count;
-//    size_t capacity;
-//} glTF_Images;
-//
-//typedef struct {
-//    /* CPU-relevant data.
-//     * can be freed once uploaded to GPU */
-//    String_Builder file_buffer;
-//    cgltf_data *gltf_data;
-//
-//    /* GPU-relevant data */
-//    glTF_Meshes meshes;
-//    glTF_Textures textures;
-//    glTF_Images images;
-//} glTF_Model;
-
 const char *cgltf_res_to_str(cgltf_result res)
 {
     switch (res) {
@@ -221,7 +172,7 @@ Model load_model_from_gltf_into_memory(const char *file_path)
                 .b = primitive.material->pbr_metallic_roughness.base_color_factor[2]*255,
                 .a = primitive.material->pbr_metallic_roughness.base_color_factor[3]*255,
             };
-            mesh.material.base_color = color_to_uint32_t(color);
+            mesh.material.color = color_to_uint32_t(color);
 
             /* various texture indices */
             cgltf_texture *texture = NULL;
@@ -267,6 +218,9 @@ Model load_model_from_gltf_into_memory(const char *file_path)
                 printf("index component type %d unsupported\n", primitive.indices->component_type);
                 assert(0);
             }
+
+            mesh.tri_count = mesh.cpu.indices.count/3;
+            mesh.ccw = true;
 
             da_append(&model.meshes, mesh);
         }

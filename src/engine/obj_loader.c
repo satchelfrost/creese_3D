@@ -45,9 +45,6 @@ Model load_model_from_obj_into_memory(const char *file_path)
         return model;
     }
 
-    if (attr.num_normals)   mesh.attribute_mask |= (1<<ATTRIBUTE_NORMAL);
-    if (attr.num_texcoords) mesh.attribute_mask |= (1<<ATTRIBUTE_UV);
-
     for (size_t i = 0; i < attr.num_faces; i++) {
         int v_idx  = attr.faces[i].v_idx;
         int vt_idx = attr.faces[i].vt_idx;
