@@ -150,6 +150,17 @@ enum {
     MODEL_COUNT,
 } model = 0;
 
+uint32_t rand_color()
+{
+    Color c = {
+        .r = rand()/(float)RAND_MAX*255,
+        .g = rand()/(float)RAND_MAX*255,
+        .b = rand()/(float)RAND_MAX*255,
+        .a = 255,
+    };
+    return color_to_uint32_t(c);
+}
+
 int main()
 {
     init_window(640, 480, "triangle mesh");
@@ -202,6 +213,16 @@ int main()
     /* note we're not using `load_model_from_obj` because we want to manually call load_model_gpu */
     models[MODEL_BUNNY] = load_model_from_obj_into_memory("assets/bunny.obj");
     models[MODEL_BUNNY].meshes.items[0].material.color = color_to_uint32_t(RED);
+
+    /* show individual triangles of bunny model */
+   if (0) {
+        for (size_t i = 0; i < models[MODEL_BUNNY].meshes.items[0].tri_count; i++) {
+            uint32_t c = rand_color();
+            da_append(&models[MODEL_BUNNY].meshes.items[0].cpu.colors, c);
+            da_append(&models[MODEL_BUNNY].meshes.items[0].cpu.colors, c);
+            da_append(&models[MODEL_BUNNY].meshes.items[0].cpu.colors, c);
+        }
+    }
 
     /* load models to the gpu */
     for (size_t i = 0; i < MODEL_COUNT; i++) load_model_gpu(&models[i]);
